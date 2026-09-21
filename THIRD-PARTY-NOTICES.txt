@@ -1,0 +1,9 @@
+SAP MCP Desktop Bridge bundles Node.js and abap-adt-mcp 2.1.0 with its runtime dependencies.
+
+Node.js is distributed under its own license and third-party notices in LICENSES/Node-LICENSE.
+abap-adt-mcp is MIT-licensed; its license is in vendor/node_modules/abap-adt-mcp/LICENSE.
+Licenses for transitive npm packages remain alongside those packages under vendor/node_modules.
+
+Electron 44.4.2 is included in the desktop runtime. Its LICENSE and LICENSES.chromium.html
+remain alongside the Windows runtime and in the macOS Electron distribution.
+The vendored @iarna/toml 2.2.5 parser retains its license in src/lib/toml/LICENSE.

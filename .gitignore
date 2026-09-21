@@ -1,0 +1,17 @@
+# Build inputs and outputs: the pinned base package and Electron downloads, and per-version payloads.
+build/
+
+# Local scratch: the installer tests write their isolated installs under work/.
+work/
+
+# The patched vendor files are source, not an installed dependency tree.
+node_modules/
+!packaging/vendor-patch/node_modules/
+!packaging/vendor-patch/node_modules/**
+*.tmp
+Thumbs.db
+.DS_Store
+
+# PowerShell writes its module cache under LOCALAPPDATA; a run with LOCALAPPDATA pointed here
+# once committed it by accident.
+Microsoft/

@@ -1,0 +1,9 @@
+# Vendored third-party TOML parser: keep upstream formatting so it stays diffable.
+src/lib/
+# Markup and stylesheets are left alone: whitespace in HTML is rendering-significant.
+*.html
+*.css
+*.md
+*.json
+build/
+work/
