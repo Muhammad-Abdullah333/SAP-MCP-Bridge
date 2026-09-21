@@ -1,6 +1,6 @@
 {
   "name": "sap-mcp-desktop-bridge",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Cross-platform SAP ADT MCP connection manager for Claude Desktop and ChatGPT/Codex",
   "license": "MIT",

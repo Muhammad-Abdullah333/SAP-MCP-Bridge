@@ -36,7 +36,7 @@ args = ['$install\src\host.js']
 $before=@{}
 Get-ChildItem -LiteralPath $data -File -Recurse | ForEach-Object { $before[$_.FullName]=(Get-FileHash -LiteralPath $_.FullName).Hash }
 if ($SetupExe) {
-  $installerProcess=Start-Process -FilePath $SetupExe -WindowStyle Hidden -Wait -PassThru
+  $installerProcess=Start-Process -FilePath $SetupExe -ArgumentList '/S' -WindowStyle Hidden -Wait -PassThru
   if ($installerProcess.ExitCode -ne 0) { throw 'Isolated EXE installer failed' }
 } else {
   & (Join-Path $source 'packaging\windows\Install.ps1') -Payload $Payload

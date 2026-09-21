@@ -1,0 +1,14 @@
+{
+  "note": "Every binary the Windows build downloads, pinned by version and SHA-256. packaging/fetch-base.py refuses anything that does not match. The MCP server and its dependencies are pinned separately, with integrity hashes, in packaging/vendor/package-lock.json.",
+  "node": {
+    "version": "24.11.1",
+    "url": "https://nodejs.org/dist/v24.11.1/win-x64/node.exe",
+    "sha256": "f13ac3ca23248dc389507e8fe38c34489ab7edb3e6d6700eb6da6a0b7e128eaf"
+  },
+  "electron": {
+    "version": "44.4.2",
+    "url": "https://github.com/electron/electron/releases/download/v44.4.2/electron-v44.4.2-win32-x64.zip",
+    "sha256": "6aae435b6cd5c0eedf9fd38824bae4045ffdaecd029f0b8c8328bac3f5b71f03",
+    "checksums": "https://github.com/electron/electron/releases/download/v44.4.2/SHASUMS256.txt"
+  }
+}

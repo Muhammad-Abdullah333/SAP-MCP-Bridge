@@ -6,7 +6,7 @@ root=Path(__file__).resolve().parents[1]
 parser=argparse.ArgumentParser()
 parser.add_argument('--platform',choices=['win32-x64','darwin-arm64','darwin-x64'],required=True)
 parser.add_argument('--output',required=True)
-parser.add_argument('--base',required=True,help='Pinned base package containing the Node runtime and the MCP server dependencies')
+parser.add_argument('--base',required=True,help='build/base-payload as filled by packaging/fetch-base.py, or a pinned base package ZIP')
 args=parser.parse_args();version=json.loads((root/'package.json').read_text())['version'];out=Path(args.output).resolve();out.mkdir(parents=True,exist_ok=True)
 platform=args.platform;electron=root/'build/downloads'/f'electron-v44.4.2-{platform}.zip'
 checks=(root/'build/downloads/electron-SHASUMS256.txt').read_text();digest=hashlib.sha256(electron.read_bytes()).hexdigest()
@@ -35,11 +35,23 @@ def source(z,prefix):
  for name in ['bridge.png','bridge.ico','bridge.icns','bridge.svg']:put(z,prefix+'assets/'+name,(root/'assets'/name).read_bytes())
 if platform=='win32-x64':
  payload=work/'payload.zip'
- with zipfile.ZipFile(args.base) as oldkit:
-  oldpayload=work/'base-payload.zip';oldpayload.write_bytes(oldkit.read('payload.zip'))
- with zipfile.ZipFile(payload,'w') as z,zipfile.ZipFile(oldpayload) as old,zipfile.ZipFile(electron) as desktop:
-  for info in old.infolist():
-   if info.filename.startswith(('app/vendor/','app/runtime/')): z.writestr(info,vendor_bytes(info.filename,'app/vendor/',old.read(info.filename)),compress_type=zipfile.ZIP_DEFLATED,compresslevel=6)
+ base=Path(args.base)
+ # The runtime and the MCP server come either from a folder filled by
+ # packaging/fetch-base.py (public sources, verified) or from a pinned base package ZIP.
+ if base.is_dir():
+  base_files=[(p.relative_to(base).as_posix(),p) for d in ('app/runtime','app/vendor') for p in sorted((base/d).rglob('*')) if p.is_file()]
+  assert any(n=='app/runtime/node.exe' for n,_ in base_files),f'no app/runtime/node.exe under {base}; run packaging/fetch-base.py first'
+ else:
+  with zipfile.ZipFile(base) as oldkit:
+   oldpayload=work/'base-payload.zip';oldpayload.write_bytes(oldkit.read('payload.zip'))
+ with zipfile.ZipFile(payload,'w') as z,zipfile.ZipFile(electron) as desktop:
+  if base.is_dir():
+   # Sorted, with fixed timestamps (put), so the same inputs always give the same payload.
+   for name,p in base_files: put(z,name,vendor_bytes(name,'app/vendor/',p.read_bytes()),0o755 if name.endswith('.exe') else 0o644)
+  else:
+   with zipfile.ZipFile(oldpayload) as old:
+    for info in old.infolist():
+     if info.filename.startswith(('app/vendor/','app/runtime/')): z.writestr(info,vendor_bytes(info.filename,'app/vendor/',old.read(info.filename)),compress_type=zipfile.ZIP_DEFLATED,compresslevel=6)
   source(z,'app/')
   for info in desktop.infolist():
    if info.is_dir() or info.filename=='resources/default_app.asar':continue

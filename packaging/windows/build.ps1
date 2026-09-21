@@ -1,9 +1,14 @@
+# Builds the Windows installer. By default the runtime and the MCP server come from
+# build\base-payload, which packaging\fetch-base.py fills from their public sources.
 param(
- [Parameter(Mandatory=$true)][string]$BasePackage,
- [Parameter(Mandatory=$true)][string]$Python,
- [Parameter(Mandatory=$true)][string]$Output
+ [string]$BasePackage = (Join-Path $PSScriptRoot '..\..\build\base-payload'),
+ [string]$Python = 'python',
+ [string]$Output = (Join-Path $PSScriptRoot '..\..\dist')
 )
 $ErrorActionPreference='Stop'
+New-Item -ItemType Directory -Force -Path $Output | Out-Null
+$Output=(Resolve-Path -LiteralPath $Output).Path
+$BasePackage=(Resolve-Path -LiteralPath $BasePackage).Path
 $project=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $version=(Get-Content -Raw -LiteralPath (Join-Path $project 'package.json') | ConvertFrom-Json).version
 & $Python (Join-Path $project 'packaging\build-desktop.py') --platform win32-x64 --base $BasePackage --output $Output

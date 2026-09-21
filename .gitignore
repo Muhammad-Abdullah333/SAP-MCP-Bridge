@@ -1,4 +1,4 @@
-# Build inputs and outputs: the pinned base package and Electron downloads, and per-version payloads.
+# Build inputs and outputs: what packaging/fetch-base.py downloads, and per-version payloads.
 build/
 
 # Local scratch: the installer tests write their isolated installs under work/.
@@ -15,3 +15,5 @@ Thumbs.db
 # PowerShell writes its module cache under LOCALAPPDATA; a run with LOCALAPPDATA pointed here
 # once committed it by accident.
 Microsoft/
+# Local build output: packaging/windows/build.ps1 writes here by default.
+dist/

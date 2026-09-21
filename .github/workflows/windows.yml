@@ -1,0 +1,95 @@
+# Builds the Windows installer from this repository and nothing else: the Node.js runtime,
+# Electron and the MCP server's dependencies are downloaded from their public sources and
+# verified against the hashes pinned in packaging/pins.json and packaging/vendor.
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.11.1
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Fetch and verify the runtime, Electron and the MCP server
+        run: python packaging/fetch-base.py
+
+      - name: Tests
+        run: npm test
+
+      - name: Build the installer
+        shell: powershell
+        run: packaging\windows\build.ps1 -Output dist
+
+      - name: Installer tests (upgrade, client setup, rollback)
+        shell: powershell
+        run: |
+          $version = (Get-Content -Raw package.json | ConvertFrom-Json).version
+          $payload = (Resolve-Path "build\desktop-win32-x64-$version\payload.zip").Path
+          powershell -NoProfile -ExecutionPolicy Bypass -File test\install-test.ps1 -Payload $payload -LegacyRegistration
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File test\rollback-test.ps1 -Payload $payload
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check the build against this source
+        run: python packaging/windows/verify-release.py dist
+
+      # Published as notes on the run, so anyone can compare this build with their own.
+      # The content fingerprint covers every file's name and uncompressed bytes, so it is the
+      # same for the same source whichever zlib compressed the payload.
+      - name: Record the build's hashes
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "::notice title=App content fingerprint::$(python packaging/payload-digest.py build/desktop-win32-x64-$version/payload.zip)"
+          echo "::notice title=App payload SHA-256::$(sha256sum build/desktop-win32-x64-$version/payload.zip | cut -c1-64)"
+          echo "::notice title=Installer SHA-256::$(sha256sum dist/*-Windows-Setup.exe | cut -c1-64)"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: SAP-MCP-Desktop-Bridge-Windows
+          path: |
+            dist/*-Windows-Setup.exe
+            dist/SHA256SUMS-*.txt
+          if-no-files-found: error
+
+  # A version tag turns the tested build into a draft release. Nothing is public until a
+  # maintainer reviews the draft and publishes it.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: SAP-MCP-Desktop-Bridge-Windows
+          path: dist
+
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" dist/*-Windows-Setup.exe "dist/SHA256SUMS-$version.txt" \
+            --draft --title "SAP MCP Connection Manager $version" \
+            --notes-file "packaging/release-notes/$version.md"

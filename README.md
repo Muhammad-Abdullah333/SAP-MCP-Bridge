@@ -19,6 +19,8 @@ Windows 10 and 11.
 
 To update, run a newer installer. Your connections, passwords and certificates are kept.
 
+For unattended or managed installs, run the installer with `/S`. It installs without showing any window, doesn't open the app, and reports the result as its exit code (0 means success). If it fails, the reason is written to `%TEMP%\sap-mcp-bridge-install-error.log`.
+
 ## Set up a connection
 
 1. Open **SAP MCP Connection Manager** from the Start menu.
@@ -60,6 +62,8 @@ The policy is enforced by the MCP server itself, before a request reaches SAP, s
 - Connections and certificates are kept in `%LOCALAPPDATA%\SAP MCP Desktop Bridge`. Passwords are encrypted with Windows DPAPI, so only your Windows account can read them.
 - **Encrypted backup** exports your connections, passwords and certificates, protected by a passphrase you choose. It can be opened on another computer with that passphrase, so treat both with care.
 
+The full [privacy policy](PRIVACY.md) sets out what is stored, what is sent where, and how to remove it.
+
 ## Uninstall
 
 Close the manager, then run:
@@ -74,9 +78,27 @@ This removes the app and its Start-menu shortcut. Your connections and saved pas
 
 The source is in `src` (manager, desktop shell and MCP host), `packaging` (installer and build scripts) and `test`. `packaging/vendor-patch` holds our patched copy of the MCP server's policy engine. It's kept as the file it replaces, which is why it sits under a `node_modules` path. No dependencies are committed.
 
-- **Tests:** run `npm test` with Node.js 24. The end-to-end policy test runs the real MCP server when the pinned base package is unpacked into `build/base-payload/`, and skips otherwise.
-- **Installer:** `packaging\windows\build.ps1 -BasePackage <pinned base package> -Python python -Output <folder>`. The base package holds the pinned Node.js runtime and the MCP server's dependencies. The Electron archives go in `build/downloads` and are checked against the official checksums. Neither is kept in this repository.
-- **Checking a build:** `python packaging/windows/verify-release.py <output folder>` checks the built installer against this source.
+Everything the installer contains comes from this repository or from a public source, pinned by version and hash. It needs Windows, Node.js 24 and Python 3:
+
+1. `python packaging/fetch-base.py` downloads the Node.js runtime and Electron and checks them against the SHA-256 hashes in `packaging/pins.json`. It then installs the MCP server and its dependencies from npm with `npm ci`, exactly as locked in `packaging/vendor/package-lock.json`.
+2. `npm test` runs the test suite, including the end-to-end policy test against the real MCP server.
+3. `packaging\windows\build.ps1` builds the installer into `dist\`. The same inputs always give the same app contents: `python packaging/payload-digest.py <payload.zip>` prints a fingerprint of them that doesn't depend on which compressor packed them, and every GitHub build publishes its fingerprint for comparison.
+4. `python packaging/windows/verify-release.py dist` checks the build against this source and writes its checksums.
+
+The [Windows build](.github/workflows/windows.yml) workflow runs these same steps on GitHub Actions for every change, and runs the installer tests too.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+Signing is being set up: releases will be signed once SignPath Foundation has approved the project. Until then, Windows shows a SmartScreen notice on first run.
+
+- **Committers and reviewers:** [@Muhammad-Abdullah333](https://github.com/Muhammad-Abdullah333)
+- **Approvers:** [@Muhammad-Abdullah333](https://github.com/Muhammad-Abdullah333)
+
+Each release is built from this repository by the [Windows build](.github/workflows/windows.yml) on GitHub Actions, and is signed only after an approver has approved it.
+
+**Privacy:** this program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. See the [privacy policy](PRIVACY.md).
 
 ## License
 

@@ -23,7 +23,7 @@ const patch = path.join(project, 'packaging', 'vendor-patch', 'node_modules', 'a
 
 if (!fs.existsSync(path.join(vendor, 'abap-adt-mcp', 'dist', 'index.js'))) {
   console.log('SKIP: the vendored MCP server is not present (build/ is not in version control).');
-  console.log('      Unpack the pinned base package into build/base-payload/ to run this test.');
+  console.log('      Run python packaging/fetch-base.py to fetch it into build/base-payload/, then run this test.');
   return;
 }
 
