@@ -87,18 +87,15 @@ Everything the installer contains comes from this repository or from a public so
 
 The [Windows build](.github/workflows/windows.yml) workflow runs these same steps on GitHub Actions for every change, and runs the installer tests too.
 
-## Code signing policy
+## Code signing
 
-Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+Releases aren't code-signed yet, so Windows shows a SmartScreen notice the first time you run the installer: choose **More info → Run anyway**. Signing is planned.
 
-Signing is being set up: releases will be signed once SignPath Foundation has approved the project. Until then, Windows shows a SmartScreen notice on first run.
+Until then you can check what you downloaded. Each release lists the SHA-256 of its files in `SHA256SUMS-<version>.txt`. Every release is built from this repository by the [Windows build](.github/workflows/windows.yml) on GitHub Actions, which publishes a fingerprint of the app's contents that you can reproduce from this source (see *Building from source*).
 
-- **Committers and reviewers:** [@Muhammad-Abdullah333](https://github.com/Muhammad-Abdullah333)
-- **Approvers:** [@Muhammad-Abdullah333](https://github.com/Muhammad-Abdullah333)
+## Support the project
 
-Each release is built from this repository by the [Windows build](.github/workflows/windows.yml) on GitHub Actions, and is signed only after an approver has approved it.
-
-**Privacy:** this program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. See the [privacy policy](PRIVACY.md).
+It's free and open source. If it helps you, a ⭐ on GitHub helps other SAP developers find it, and bug reports and ideas are welcome as [issues](https://github.com/Muhammad-Abdullah333/SAP-MCP-Bridge/issues).
 
 ## License
 
