@@ -49,8 +49,16 @@ function manage(file, client, helpers, options = {}) {
   if (!fs.existsSync(file)) return null;
   const original = fs.readFileSync(file, 'utf8'),
     text = original.replace(/^\uFEFF/, '');
-  const claude = client === 'Claude Desktop',
+  const claude = client === 'Claude Desktop';
+  let config;
+  try {
     config = claude ? JSON.parse(text) : TOML.parse(text);
+  } catch (error) {
+    // Same wording as configure.js, plus where the parser stopped, so the person can find it.
+    throw new Error(
+      `Existing ${claude ? 'Claude configuration is invalid JSON' : 'Codex configuration is invalid TOML'}; it was left unchanged. ${String(error.message).split('\n')[0]}`,
+    );
+  }
   const entries = claude ? config.mcpServers : config.mcp_servers;
   if (!entries) return null;
   const legacy = Object.entries(entries).filter(([, entry]) => active(entry) && directLegacy(entry));

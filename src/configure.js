@@ -269,11 +269,11 @@ function configureAll(options = {}) {
       for (const file of client.files || [])
         if (file.status === 'configured') {
           file.status = 'rolled-back';
-          file.message = 'Installation failed; the previous configuration was restored.';
+          file.message = 'Setup failed for another client, so this configuration was put back as it was.';
           client.status = 'rolled-back';
         }
   }
-  const result = { ranAt: new Date().toISOString(), clients, rolledBack, failed };
+  const result = require('./client-advice').annotate({ ranAt: new Date().toISOString(), clients, rolledBack, failed });
   if (options.report !== false) {
     try {
       atomicWrite(path.join(paths.dataDir, 'client-setup.json'), `${JSON.stringify(result, null, 2)}\n`);

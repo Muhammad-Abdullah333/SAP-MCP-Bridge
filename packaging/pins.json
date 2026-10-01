@@ -1,5 +1,5 @@
 {
-  "note": "Every binary the Windows build downloads, pinned by version and SHA-256. packaging/fetch-base.py refuses anything that does not match. The MCP server and its dependencies are pinned separately, with integrity hashes, in packaging/vendor/package-lock.json.",
+  "note": "Every binary the Windows build downloads, pinned by version and SHA-256. packaging/fetch-base.py refuses anything that does not match. The MCP server and its dependencies are pinned separately, with integrity hashes, in packaging/vendor/package-lock.json. rcedit and Inno Setup are build tools: rcedit gives the app's executable its own name and details, Inno Setup builds the installer.",
   "node": {
     "version": "24.11.1",
     "url": "https://nodejs.org/dist/v24.11.1/win-x64/node.exe",
@@ -10,5 +10,15 @@
     "url": "https://github.com/electron/electron/releases/download/v44.4.2/electron-v44.4.2-win32-x64.zip",
     "sha256": "6aae435b6cd5c0eedf9fd38824bae4045ffdaecd029f0b8c8328bac3f5b71f03",
     "checksums": "https://github.com/electron/electron/releases/download/v44.4.2/SHASUMS256.txt"
+  },
+  "rcedit": {
+    "version": "2.0.0",
+    "url": "https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe",
+    "sha256": "3e7801db1a5edbec91b49a24a094aad776cb4515488ea5a4ca2289c400eade2a"
+  },
+  "innosetup": {
+    "version": "6.7.3",
+    "url": "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe",
+    "sha256": "9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732"
   }
 }

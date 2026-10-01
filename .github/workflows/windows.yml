@@ -1,6 +1,7 @@
 # Builds the Windows installer from this repository and nothing else: the Node.js runtime,
-# Electron and the MCP server's dependencies are downloaded from their public sources and
-# verified against the hashes pinned in packaging/pins.json and packaging/vendor.
+# Electron, the build tools (rcedit, Inno Setup) and the MCP server's dependencies are
+# downloaded from their public sources and verified against the hashes pinned in
+# packaging/pins.json and packaging/vendor.
 name: Windows build
 
 on:
@@ -16,6 +17,8 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    # A normal run takes under ten minutes; anything far longer has hung.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
@@ -37,15 +40,28 @@ jobs:
         shell: powershell
         run: packaging\windows\build.ps1 -Output dist
 
-      - name: Installer tests (upgrade, client setup, rollback)
+      - name: Installer tests (upgrade, saved passwords, client setup, running programs, uninstall)
         shell: powershell
+        timeout-minutes: 20
         run: |
           $version = (Get-Content -Raw package.json | ConvertFrom-Json).version
-          $payload = (Resolve-Path "build\desktop-win32-x64-$version\payload.zip").Path
-          powershell -NoProfile -ExecutionPolicy Bypass -File test\install-test.ps1 -Payload $payload -LegacyRegistration
+          $setup = (Resolve-Path "dist\SAP-MCP-Desktop-Bridge-$version-Windows-Setup.exe").Path
+          powershell -NoProfile -ExecutionPolicy Bypass -File test\legacy-dpapi-test.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          powershell -NoProfile -ExecutionPolicy Bypass -File test\rollback-test.ps1 -Payload $payload
+          powershell -NoProfile -ExecutionPolicy Bypass -File test\install-test.ps1 -SetupExe $setup -LegacyRegistration
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File test\client-failure-test.ps1 -SetupExe $setup
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File test\upgrade-running-test.ps1 -SetupExe $setup
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Keep the installer logs of a failed or cancelled test
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v7
+        with:
+          name: setup-logs
+          path: work/setup-logs
+          if-no-files-found: ignore
 
       - name: Check the build against this source
         run: python packaging/windows/verify-release.py dist

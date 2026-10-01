@@ -5,6 +5,7 @@
   "description": "The MCP server and its dependencies, pinned exactly as shipped. Installed with npm ci.",
   "license": "MIT",
   "dependencies": {
-    "abap-adt-mcp": "2.1.0"
+    "abap-adt-mcp": "2.1.0",
+    "koffi": "3.3.1"
   }
 }

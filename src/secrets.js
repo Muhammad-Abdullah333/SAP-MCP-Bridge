@@ -6,41 +6,35 @@ const { spawnSync } = require('child_process');
 const paths = require('./paths');
 const { ensureDir } = require('./storage');
 
-function helper() {
-  return path.join(__dirname, 'windows-secret-store.ps1');
-}
-
+// One DPAPI-protected file per connection: <id>.bin holds the UTF-8 JSON of its secrets.
 function runWindows(action, id, value) {
+  if (!/^[A-Z0-9_-]{1,80}$/.test(id)) throw new Error('Invalid credential identifier.');
   ensureDir(paths.secretsDir);
-  const powershell = path.join(
-    process.env.SystemRoot || 'C:\\Windows',
-    'System32',
-    'WindowsPowerShell',
-    'v1.0',
-    'powershell.exe',
-  );
-  const result = spawnSync(
-    powershell,
-    [
-      '-NoLogo',
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      helper(),
-      '-Action',
-      action,
-      '-Id',
-      id,
-      '-Store',
-      paths.secretsDir,
-    ],
-    { input: value === undefined ? '' : JSON.stringify(value), encoding: 'utf8', windowsHide: true },
-  );
-  if (result.error) throw new Error(`Secure storage could not start: ${result.error.message}`);
-  if (result.status !== 0) throw new Error((result.stderr || result.stdout || 'Secure storage failed').trim());
-  return result.stdout ? JSON.parse(result.stdout) : null;
+  const file = path.join(paths.secretsDir, `${id}.bin`);
+  const dpapi = require('./dpapi');
+  if (action === 'set') {
+    const plain = Buffer.from(value === undefined ? 'null' : JSON.stringify(value), 'utf8');
+    try {
+      const temp = `${file}.${process.pid}.tmp`;
+      fs.writeFileSync(temp, dpapi.protect(plain), { mode: 0o600 });
+      fs.renameSync(temp, file);
+    } finally {
+      plain.fill(0);
+    }
+    return { ok: true };
+  }
+  if (action === 'get') {
+    if (!fs.existsSync(file)) return null;
+    const plain = dpapi.unprotect(fs.readFileSync(file));
+    try {
+      const text = plain.toString('utf8').replace(/^\uFEFF/, '');
+      return text ? JSON.parse(text) : null;
+    } finally {
+      plain.fill(0);
+    }
+  }
+  fs.rmSync(file, { force: true });
+  return { ok: true };
 }
 
 function runMac(action, id, value) {

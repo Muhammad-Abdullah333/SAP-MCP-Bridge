@@ -9,7 +9,7 @@ Windows 10 and 11.
 ## Install
 
 1. Download `SAP-MCP-Desktop-Bridge-<version>-Windows-Setup.exe` from [Releases](../../releases).
-2. Run it. It installs for your Windows user only, needs no administrator rights, and opens the manager when it finishes.
+2. Run it. It installs for your Windows user only and needs no administrator rights. It offers to connect Claude Desktop and Codex (their settings are backed up first) and to open the manager when it finishes.
 3. Windows may show a SmartScreen notice the first time. Choose **More info → Run anyway**.
 
 **You don't need to install Node.js or anything else.** The installer includes its own Node.js runtime, the desktop shell and the MCP server. The only other things you need are:
@@ -17,9 +17,9 @@ Windows 10 and 11.
 - **Claude Desktop** or **Codex**, installed. A ChatGPT browser session alone can't use a local connector.
 - **An SAP account with ADT access**, a reachable HTTPS address, and your company's CA certificate if its servers use a private one.
 
-To update, run a newer installer. Your connections, passwords and certificates are kept.
+To update, run a newer installer. Your connections, passwords and certificates are kept. If the manager or a Bridge MCP server is running, the installer closes it; restart Claude Desktop or Codex afterwards.
 
-For unattended or managed installs, run the installer with `/S`. It installs without showing any window, doesn't open the app, and reports the result as its exit code (0 means success). If it fails, the reason is written to `%TEMP%\sap-mcp-bridge-install-error.log`.
+For unattended or managed installs, run the installer with `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`. It shows no window and doesn't open the app. The exit code reports the result: 0 means success, and 10 means the app is installed but Claude Desktop or Codex couldn't be connected (the reason is in `%TEMP%\sap-mcp-bridge-install-error.log` and in the manager). Add `/MERGETASKS="!clients"` to install without touching Claude Desktop or Codex.
 
 ## Set up a connection
 
@@ -30,6 +30,16 @@ For unattended or managed installs, run the installer with `/S`. It installs wit
 5. Fully quit and reopen Claude Desktop or Codex.
 
 **Test through MCP** and **Full diagnostics** start the connection exactly as your AI client will, and tell you where it fails.
+
+### If Claude Desktop or Codex isn't connected
+
+Bridge never changes a client's settings file it can't read safely, and if one client fails it puts the others back as they were. The manager's **Logs** show which file, why, and what to do. The usual causes:
+
+- **The client wasn't found.** You installed the Bridge before Claude Desktop or Codex. Install the client, then choose **Configure MCP clients**.
+- **Its settings file contains a mistake**, often a missing or extra comma after editing it by hand. For Claude Desktop, open **Settings → Developer → Edit Config**. For Codex, open `config.toml` at the path shown in Logs. Correct it, or put back one of the `.backup` files Bridge keeps next to it, then choose **Configure MCP clients**.
+- **The file couldn't be saved.** It's read-only, held open by another program (OneDrive syncing, antivirus), or the disk is full.
+- **A connector named `SAP-Bridge` already exists** that Bridge didn't create. Rename or remove it, then retry.
+- **It's connected, but you don't see SAP-Bridge.** The client wasn't fully restarted. Closing the Claude Desktop window can leave it running in the system tray, so quit it from there.
 
 With more than one connection, the one marked **Default system** is used whenever a request doesn't name a system. Only one connection can be the default.
 
@@ -66,11 +76,7 @@ The full [privacy policy](PRIVACY.md) sets out what is stored, what is sent wher
 
 ## Uninstall
 
-Close the manager, then run:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Programs\SAP MCP Desktop Bridge\Uninstall.ps1"
-```
+Open **Settings → Apps → Installed apps**, find **SAP MCP Desktop Bridge** and choose **Uninstall**.
 
 This removes the app and its Start-menu shortcut. Your connections and saved passwords are kept, in case you reinstall. Delete `%LOCALAPPDATA%\SAP MCP Desktop Bridge` to remove them as well. Also remove the `SAP-Bridge` entry from Claude Desktop's and Codex's MCP settings.
 
@@ -80,9 +86,9 @@ The source is in `src` (manager, desktop shell and MCP host), `packaging` (insta
 
 Everything the installer contains comes from this repository or from a public source, pinned by version and hash. It needs Windows, Node.js 24 and Python 3:
 
-1. `python packaging/fetch-base.py` downloads the Node.js runtime and Electron and checks them against the SHA-256 hashes in `packaging/pins.json`. It then installs the MCP server and its dependencies from npm with `npm ci`, exactly as locked in `packaging/vendor/package-lock.json`.
+1. `python packaging/fetch-base.py` downloads the Node.js runtime, Electron and two build tools, [rcedit](https://github.com/electron/rcedit) and [Inno Setup](https://jrsoftware.org/isinfo.php), and checks them against the SHA-256 hashes in `packaging/pins.json`. It then installs the MCP server and [koffi](https://koffi.dev), which the app uses to call Windows' own password encryption, from npm with `npm ci`, exactly as locked in `packaging/vendor/package-lock.json`.
 2. `npm test` runs the test suite, including the end-to-end policy test against the real MCP server.
-3. `packaging\windows\build.ps1` builds the installer into `dist\`. The same inputs always give the same app contents: `python packaging/payload-digest.py <payload.zip>` prints a fingerprint of them that doesn't depend on which compressor packed them, and every GitHub build publishes its fingerprint for comparison.
+3. `packaging\windows\build.ps1` builds the installer into `dist\` with Inno Setup, from `packaging/windows/installer.iss`. The same inputs always give the same app contents: `python packaging/payload-digest.py <payload.zip>` prints a fingerprint of them that doesn't depend on which compressor packed them, and every GitHub build publishes its fingerprint for comparison.
 4. `python packaging/windows/verify-release.py dist` checks the build against this source and writes its checksums.
 
 The [Windows build](.github/workflows/windows.yml) workflow runs these same steps on GitHub Actions for every change, and runs the installer tests too.
@@ -90,6 +96,8 @@ The [Windows build](.github/workflows/windows.yml) workflow runs these same step
 ## Code signing
 
 Releases aren't code-signed yet, so Windows shows a SmartScreen notice the first time you run the installer: choose **More info → Run anyway**. Signing is planned.
+
+Microsoft Defender and some other antivirus products flagged the 1.0.0 and 1.0.1 installers with generic machine-learning detections such as `Trojan:Win32/Sabsik.EN.B!ml`. These were false positives. Those installers unpacked themselves and ran hidden PowerShell, and the app used hidden PowerShell to decrypt saved passwords, which is the pattern such heuristics look for. From 1.0.2 the installer is a standard Inno Setup installer, and the app calls Windows' password encryption directly and contains no scripts. If your antivirus still flags a release, please [open an issue](https://github.com/Muhammad-Abdullah333/SAP-MCP-Bridge/issues) and report the file to the vendor as a false positive (for Defender, use [Microsoft's file submission](https://www.microsoft.com/wdsi/filesubmission)). Don't turn off your antivirus to install it.
 
 Until then you can check what you downloaded. Each release lists the SHA-256 of its files in `SHA256SUMS-<version>.txt`. Every release is built from this repository by the [Windows build](.github/workflows/windows.yml) on GitHub Actions, which publishes a fingerprint of the app's contents that you can reproduce from this source (see *Building from source*).
 

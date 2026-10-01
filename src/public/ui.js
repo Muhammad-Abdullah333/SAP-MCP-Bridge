@@ -38,10 +38,12 @@ async function call(route, method = 'GET', data) {
   if (!response.ok) throw new Error(value.error || 'Request failed');
   return value;
 }
-function notify(message, error = false, record = true) {
+// advice replaces the generic explanation when the caller already knows what to do.
+function notify(message, error = false, record = true, advice) {
   if (record) addLog(message, error);
   if (error) {
     const help = explainError(message);
+    if (advice) help.message = advice;
     $('error-help-text').textContent = help.message;
     $('error-help').hidden = false;
     $('error-guide').onclick = () => {
@@ -432,24 +434,27 @@ function showClients(report, announce = false) {
         c.client + ': ' + clientStatus(c),
         c.message,
         ...(c.files || []).flatMap(f => [f.status + ': ' + f.message, f.file, f.backup ? 'Backup: ' + f.backup : '']),
+        // Plain-language next step from src/client-advice.js (absent in reports from before 1.0.2).
+        c.advice ? 'What to do: ' + c.advice : '',
       ]
         .filter(Boolean)
         .join('\n'),
     )
     .join('\n\n');
-  addLog(
-    detail,
-    report.clients.some(c => c.status === 'error'),
-    'clients:' + JSON.stringify(report),
-    report.ranAt,
-  );
+  const failed = report.clients.some(c => c.status === 'error');
+  addLog(detail, failed, 'clients:' + JSON.stringify(report), report.ranAt);
   if (announce) {
-    $('client-summary').textContent = summary + ' — ' + new Date(report.ranAt).toLocaleString() + '. Details in Logs.';
-    notify(
-      summary,
-      report.clients.some(c => c.status === 'error'),
-      false,
-    );
+    // A failure leads with how to fix it; otherwise the next step, such as restarting the client.
+    const advice = [
+      ...new Set(
+        report.clients
+          .filter(c => c.advice && (!failed || ['error', 'rolled-back'].includes(c.status)))
+          .map(c => (failed ? c.client + ': ' : '') + c.advice),
+      ),
+    ].join(' ');
+    $('client-summary').textContent =
+      summary + ' — ' + new Date(report.ranAt).toLocaleString() + '. ' + (advice ? advice + ' ' : '') + 'Details in Logs.';
+    notify(summary, failed, false, failed ? advice : undefined);
   }
 }
 async function refresh() {

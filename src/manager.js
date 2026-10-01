@@ -74,12 +74,10 @@ process.on('exit', releaseManagerLock);
 process.on('SIGINT', () => process.exit(0));
 process.on('SIGTERM', () => process.exit(0));
 
+// Importing from earlier managers and from abap-adt-mcp's own settings happens only when
+// the person asks (Import, Import vault). Scanning Documents/OneDrive and decrypting what
+// it finds on every start is what antivirus behaviour monitoring calls credential theft.
 let migrationSummary;
-try {
-  migrationSummary = importAll();
-} catch (error) {
-  migrationSummary = { status: 'error', warnings: [error.message], imported: [], skipped: [] };
-}
 
 const token = crypto.randomBytes(24).toString('hex');
 const publicDir = path.join(__dirname, 'public');

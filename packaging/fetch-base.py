@@ -2,16 +2,19 @@
 
 Usage: python packaging/fetch-base.py
 
-Downloads the Node.js runtime and Electron at the versions pinned in packaging/pins.json,
-refusing any file whose SHA-256 differs, and installs the MCP server with its dependencies
-from npm exactly as pinned (with integrity hashes) in packaging/vendor/package-lock.json.
-The result is laid out where the build and the tests expect it:
+Downloads the Node.js runtime, Electron and the build tools (rcedit, Inno Setup) at the
+versions pinned in packaging/pins.json, refusing any file whose SHA-256 differs, and installs
+the MCP server and koffi with their dependencies from npm exactly as pinned (with integrity
+hashes) in packaging/vendor/package-lock.json. The result is laid out where the build and
+the tests expect it:
 
-  build/downloads/                      Electron archive and its official checksum list
+  build/downloads/                      Electron archive, its official checksum list, Inno Setup
   build/base-payload/app/runtime/       node.exe
-  build/base-payload/app/vendor/        node_modules of the MCP server
+  build/base-payload/app/vendor/        node_modules of the MCP server and koffi
+  build/tools/                          rcedit-x64.exe, and Inno Setup (portable) in inno/
 
-Install scripts are not run: the only dependency with one reports install statistics.
+Install scripts are not run. One dependency's only reports install statistics; koffi's
+looks for a prebuilt binary, which npm already installs from @koromix/koffi-win32-x64.
 """
 import hashlib
 import json
@@ -86,4 +89,29 @@ with tempfile.TemporaryDirectory(dir=root / 'build') as work:
     shutil.move(str(Path(work) / 'node_modules'), str(vendor / 'node_modules'))
 count = sum(1 for _ in (vendor / 'node_modules').rglob('*') if _.is_file())
 print(f'  {count} files in {vendor.relative_to(root)}')
+
+if os.name == 'nt':
+    tools = root / 'build/tools'
+    print('rcedit')
+    fetch(pins['rcedit']['url'], tools / 'rcedit-x64.exe', pins['rcedit']['sha256'])
+
+    print('Inno Setup')
+    inno = pins['innosetup']
+    setup = downloads / Path(inno['url']).name
+    fetch(inno['url'], setup, inno['sha256'])
+    target = tools / 'inno'
+    marker = target / 'installed-from.sha256'
+    if (target / 'ISCC.exe').is_file() and marker.is_file() and marker.read_text().strip() == inno['sha256']:
+        print(f'  verified {target.relative_to(root)} (already installed)')
+    else:
+        if target.exists():
+            shutil.rmtree(target)
+        # Portable mode: unpacked into build/tools/inno only, with no Start menu entry,
+        # uninstaller or registry change on this machine.
+        subprocess.run([str(setup), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/CURRENTUSER',
+                        '/PORTABLE=1', '/NOICONS', f'/DIR={target}'], check=True)
+        if not (target / 'ISCC.exe').is_file():
+            sys.exit('Inno Setup did not install ISCC.exe.')
+        marker.write_text(inno['sha256'] + '\n')
+        print(f'  installed {target.relative_to(root)}')
 print('Done: build inputs fetched and verified.')

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Assemble reproducible desktop payloads from verified, pinned Electron and Node archives."""
-import argparse,hashlib,json,os,plistlib,stat,zipfile
+import argparse,hashlib,json,os,plistlib,stat,subprocess,tempfile,zipfile
 from pathlib import Path
 root=Path(__file__).resolve().parents[1]
 parser=argparse.ArgumentParser()
@@ -26,6 +26,20 @@ def vendor_bytes(name,prefix,data):
  applied.add(rel);return (patch_dir/rel).read_bytes()
 def put(z,name,data,mode=0o644):
  info=zipfile.ZipInfo(name);info.create_system=3;info.external_attr=(stat.S_IFREG|mode)<<16;z.writestr(info,data,compress_type=zipfile.ZIP_DEFLATED,compresslevel=6)
+def branded_exe(data):
+ # electron.exe describes itself as "Electron" by "GitHub, Inc.", original file name
+ # electron.exe. A program whose details do not match its own name is what antivirus
+ # heuristics call masquerading, so the copy shipped gets this app's details and icon.
+ rcedit=root/'build/tools/rcedit-x64.exe'
+ assert rcedit.is_file(),f'{rcedit} is missing; run packaging/fetch-base.py first'
+ # CompanyName is the publisher Windows shows; it matches the installer (installer.iss).
+ details={'CompanyName':'Muhammad Abdullah','FileDescription':'SAP MCP Connection Manager','ProductName':'SAP MCP Desktop Bridge','InternalName':'SAP MCP Connection Manager','OriginalFilename':'SAP MCP Connection Manager.exe','LegalCopyright':'Copyright (c) 2026 SAP MCP Desktop Bridge contributors. MIT License.'}
+ with tempfile.TemporaryDirectory(dir=root/'build') as temp:
+  exe=Path(temp)/'app.exe';exe.write_bytes(data)
+  command=[str(rcedit),str(exe),'--set-file-version',version,'--set-product-version',version,'--set-icon',str(root/'assets/bridge.ico')]
+  for key,value in details.items():command+=['--set-version-string',key,value]
+  subprocess.run(command,check=True)
+  return exe.read_bytes()
 def source(z,prefix):
  for p in sorted((root/'src').rglob('*')):
   if p.is_file():put(z,prefix+p.relative_to(root).as_posix(),p.read_bytes())
@@ -39,7 +53,8 @@ if platform=='win32-x64':
  # The runtime and the MCP server come either from a folder filled by
  # packaging/fetch-base.py (public sources, verified) or from a pinned base package ZIP.
  if base.is_dir():
-  base_files=[(p.relative_to(base).as_posix(),p) for d in ('app/runtime','app/vendor') for p in sorted((base/d).rglob('*')) if p.is_file()]
+  # node_modules/.bin holds npm's .cmd/.ps1 command shims; the app never runs them.
+  base_files=[(p.relative_to(base).as_posix(),p) for d in ('app/runtime','app/vendor') for p in sorted((base/d).rglob('*')) if p.is_file() and '.bin' not in p.relative_to(base).parts]
   assert any(n=='app/runtime/node.exe' for n,_ in base_files),f'no app/runtime/node.exe under {base}; run packaging/fetch-base.py first'
  else:
   with zipfile.ZipFile(base) as oldkit:
@@ -51,22 +66,20 @@ if platform=='win32-x64':
   else:
    with zipfile.ZipFile(oldpayload) as old:
     for info in old.infolist():
-     if info.filename.startswith(('app/vendor/','app/runtime/')): z.writestr(info,vendor_bytes(info.filename,'app/vendor/',old.read(info.filename)),compress_type=zipfile.ZIP_DEFLATED,compresslevel=6)
+     if info.filename.startswith(('app/vendor/','app/runtime/')) and '/node_modules/.bin/' not in info.filename: z.writestr(info,vendor_bytes(info.filename,'app/vendor/',old.read(info.filename)),compress_type=zipfile.ZIP_DEFLATED,compresslevel=6)
   source(z,'app/')
   for info in desktop.infolist():
    if info.is_dir() or info.filename=='resources/default_app.asar':continue
-   name='app/desktop/'+('SAP MCP Connection Manager.exe' if info.filename=='electron.exe' else info.filename)
-   put(z,name,desktop.read(info.filename))
+   if info.filename=='electron.exe':put(z,'app/desktop/SAP MCP Connection Manager.exe',branded_exe(desktop.read(info.filename)),0o755)
+   else:put(z,'app/desktop/'+info.filename,desktop.read(info.filename))
   put(z,'app/desktop/resources/app/package.json',json.dumps({'name':'sap-mcp-connection-manager','version':version,'main':'index.js'}).encode())
   put(z,'app/desktop/resources/app/index.js',b"require('../../../src/desktop.js');\n")
-  put(z,'app/SAP MCP Desktop Bridge.cmd',b'@echo off\r\nstart "" "%~dp0desktop\\SAP MCP Connection Manager.exe"\r\n')
-  put(z,'app/Launch Manager.vbs',b'Set shell = CreateObject("WScript.Shell")\r\nSet fso = CreateObject("Scripting.FileSystemObject")\r\nroot = fso.GetParentFolderName(WScript.ScriptFullName)\r\nshell.Run Chr(34) & root & "\\desktop\\SAP MCP Connection Manager.exe" & Chr(34), 0, False\r\n')
-  for name in ['Uninstall.ps1','Rollback.ps1']:put(z,'app/'+name,(root/'packaging/windows'/name).read_bytes())
+  # Nothing else: the installer (packaging/windows/installer.iss) adds the Start menu
+  # shortcut and a standard uninstaller, so the app carries no launcher scripts.
+  names=set(z.namelist())
  assert applied==set(patches),f'vendor patch targets missing from the base payload: {set(patches)-applied}'
- package=out/f'SAP-MCP-Desktop-Bridge-{version}-Windows.zip'
- with zipfile.ZipFile(package,'w') as z:
-  z.write(payload,'payload.zip',compress_type=zipfile.ZIP_STORED)
-  for name in ['Setup.cmd','Install.ps1']:put(z,name,(root/'packaging/windows'/name).read_bytes())
+ # Saved passwords are encrypted through koffi (src/dpapi.js); a base without it cannot work.
+ assert 'app/vendor/node_modules/koffi/package.json' in names and any(n.startswith('app/vendor/node_modules/@koromix/koffi-win32-x64/') and n.endswith('.node') for n in names),'koffi is missing from the vendored modules; run packaging/fetch-base.py and build from build/base-payload'
  print(payload,flush=True)
 else:
  arch=platform.split('-')[1];package=out/f'SAP-MCP-Desktop-Bridge-{version}-macOS-{arch}.zip';prefix='SAP MCP Desktop Bridge.app/Contents/'
