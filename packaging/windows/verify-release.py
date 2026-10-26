@@ -3,7 +3,7 @@
 Usage: python packaging/windows/verify-release.py <output folder>
 
 Run after packaging/windows/build.ps1. It confirms that the payload is intact, that every
-file under src/ ships byte for byte, that the shipped policy engine is the patched one,
+file under src/ ships byte for byte, that the shipped policy engine and other patched vendor files are the patched ones,
 that the app carries no scripts (antivirus heuristics weigh .vbs/.cmd/.ps1 launchers and
 PowerShell helpers heavily), that its executable describes itself as this app, and that
 the installer was built. It then writes the source archive and SHA256SUMS-<version>.txt
@@ -30,8 +30,12 @@ with zipfile.ZipFile(payload_path) as z:
     for p in (root / 'src').rglob('*'):
         if p.is_file():
             assert z.read('app/' + p.relative_to(root).as_posix()) == p.read_bytes(), f'{p} differs from the payload'
-    # The engine that enforces the safety policy must be the patched one, byte for byte.
-    assert z.read('app/vendor/' + engine) == (root / 'packaging/vendor-patch' / engine).read_bytes(), 'shipped policy engine differs from the patch'
+    # The engine that enforces the safety policy must be the patched one, byte for byte,
+    # and so must every other patched vendor file.
+    patched = json.loads((root / 'packaging/vendor-patch/upstream.json').read_text(encoding='utf-8'))['files']
+    assert engine in patched, 'the policy engine is not listed in upstream.json'
+    for rel in patched:
+        assert z.read('app/vendor/' + rel) == (root / 'packaging/vendor-patch' / rel).read_bytes(), f'shipped {rel} differs from the patch'
     scripts = [n for n in z.namelist() if n.lower().endswith(('.vbs', '.vbe', '.cmd', '.bat', '.ps1', '.psm1', '.wsf', '.hta'))]
     assert not scripts, f'the app must not carry scripts: {scripts[:10]}'
     exe = z.read('app/desktop/SAP MCP Connection Manager.exe')
@@ -40,7 +44,7 @@ with zipfile.ZipFile(payload_path) as z:
     assert 'SAP MCP Connection Manager.exe'.encode('utf-16-le') in exe, 'the app executable does not carry its own details (rcedit step)'
     assert 'GitHub, Inc.'.encode('utf-16-le') not in exe, 'the app executable still names Electron\'s publisher'
     assert any(n.startswith('app/vendor/node_modules/@koromix/koffi-win32-x64/') and n.endswith('.node') for n in z.namelist()), 'koffi binary missing'
-print(f'PASS: {version} payload CRC, source parity under src/, the patched policy engine, no scripts, own executable details.')
+print(f'PASS: {version} payload CRC, source parity under src/, the patched vendor files ({len(patched)}), no scripts, own executable details.')
 
 setup = out / f'SAP-MCP-Desktop-Bridge-{version}-Windows-Setup.exe'
 assert setup.is_file() and setup.stat().st_size > 50 * 1024 * 1024, f'{setup.name} is missing or too small'

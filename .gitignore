@@ -17,3 +17,6 @@ Thumbs.db
 Microsoft/
 # Local build output: packaging/windows/build.ps1 writes here by default.
 dist/
+
+# Local knowledge graph (graphify); holds absolute local paths, never published.
+graphify-out/

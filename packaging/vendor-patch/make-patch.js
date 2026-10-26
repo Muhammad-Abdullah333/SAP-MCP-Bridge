@@ -288,13 +288,49 @@ console.log('  patched: evaluatePolicy rewritten');
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 fs.writeFileSync(path.join(OUT_DIR, 'policy.js'), Buffer.from(text, 'utf8'));
+const policyBytes = fs.statSync(path.join(OUT_DIR, 'policy.js')).size;
+
+// ------------------------------------------------------- transportRelease body
+// abap-adt-api, not abap-adt-mcp: the release re-posts went out without a body.
+const TR_UPSTREAM = 'build/base-payload/app/vendor/node_modules/abap-adt-api/build/api/transports.js';
+const TR_OUT_DIR = 'packaging/vendor-patch/node_modules/abap-adt-api/build/api';
+const TR_REL = 'node_modules/abap-adt-api/build/api/transports.js';
+const trHash = crypto.createHash('sha256').update(fs.readFileSync(TR_UPSTREAM)).digest('hex');
+text = fs.readFileSync(TR_UPSTREAM, 'utf8');
+
+replace(
+  `    const response = await h.request(\`/sap/bc/adt/cts/transportrequests/\${transportNumber}/\${action}\`, {
+        method: "POST",
+        headers: { Accept: "application/*" }
+    });`,
+  `    // Bridge patch: relwithignlock and relObjigchkatc are the "release anyway" re-posts, and
+    // SAP (CL_CTS_ADT_TM_REST_RES_CONT->POST) reads them from a tm:root body. Upstream sent
+    // none, so SAP answered 400 "System expected the element '{http://www.sap.com/cts/adt/tm}root'".
+    // The body replaces SAP's request data wholesale, so it must carry the number (which SAP
+    // does not upper-case there), and releaseobjlock keeps ignoreLocks when ATC is ignored too.
+    const options = { method: "POST", headers: { Accept: "application/*" } };
+    if (action !== "newreleasejobs") {
+        const lock = IgnoreATC && ignoreLocks ? ' tm:releaseobjlock="yes"' : "";
+        options.headers["Content-Type"] = "application/vnd.sap.adt.transportorganizer.v1+xml";
+        options.body = \`<?xml version="1.0" encoding="ASCII"?><tm:root xmlns:tm="http://www.sap.com/cts/adt/tm" tm:useraction="\${action}" tm:number="\${transportNumber.toUpperCase()}"\${lock}/>\`;
+    }
+    const response = await h.request(\`/sap/bc/adt/cts/transportrequests/\${transportNumber}/\${action}\`, options);`,
+  'transportRelease sends a tm:root body on the release-anyway actions',
+);
+
+fs.mkdirSync(TR_OUT_DIR, { recursive: true });
+fs.writeFileSync(path.join(TR_OUT_DIR, 'transports.js'), Buffer.from(text, 'utf8'));
 fs.writeFileSync(
   'packaging/vendor-patch/upstream.json',
   Buffer.from(JSON.stringify({
     package: 'abap-adt-mcp',
-    note: 'Patched vendor files overlaid onto the base payload by build-desktop.py. The build verifies the upstream digest first and refuses to build if the base package ships a different policy.js, so a future abap-adt-mcp will never be patched blindly.',
-    files: { [REL]: { upstreamSha256: upstreamHash } },
+    note: 'Patched vendor files overlaid onto the base payload by build-desktop.py. The build verifies the upstream digest first and refuses to build if the base package ships a different file, so a future abap-adt-mcp or abap-adt-api will never be patched blindly.',
+    files: {
+      [REL]: { upstreamSha256: upstreamHash },
+      [TR_REL]: { upstreamSha256: trHash },
+    },
   }, null, 2) + '\n', 'utf8'),
 );
-console.log('\nupstream sha256: ' + upstreamHash);
-console.log('patched bytes  : ' + fs.statSync(path.join(OUT_DIR, 'policy.js')).size);
+console.log('\nupstream sha256: ' + upstreamHash + '  (policy.js)');
+console.log('upstream sha256: ' + trHash + '  (transports.js)');
+console.log('patched bytes  : ' + policyBytes + ' / ' + fs.statSync(path.join(TR_OUT_DIR, 'transports.js')).size);
