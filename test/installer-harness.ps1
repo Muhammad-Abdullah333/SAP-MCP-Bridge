@@ -48,7 +48,13 @@ function Restore-UserState($Saved) {
     elseif(Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force }
   }
   if(Test-Path -LiteralPath $script:UninstallKey) { Remove-Item -LiteralPath $script:UninstallKey -Recurse -Force }
-  if($Saved.Key) { & reg.exe import $Saved.Key 2>$null | Out-Null }
+  # reg.exe reports success on stderr, which the script-wide Stop preference would turn into
+  # a failure after every check had passed. This assignment is local to the function.
+  $ErrorActionPreference='Continue'
+  if($Saved.Key) {
+    & reg.exe import $Saved.Key 2>$null | Out-Null
+    if($LASTEXITCODE -ne 0){ throw 'Could not put back the existing Settings > Apps entry.' }
+  }
 }
 
 function Invoke-Setup([string]$SetupExe,$Box,[string[]]$Extra=@()) {

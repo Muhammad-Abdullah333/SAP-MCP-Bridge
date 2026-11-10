@@ -19,6 +19,7 @@ const activity = require('./activity').createActivity(paths.dataDir);
 const transfer = require('./transfer').createTransfer();
 const { ensureDir } = require('./storage');
 const { buildDiscoveryUrl } = require('./system-config');
+const { ALIVE_ROUTE, MANAGER_APP, inspectLock } = require('./manager-lock');
 
 ensureDir(paths.dataDir);
 const managerLock = path.join(paths.dataDir, 'manager.lock');
@@ -27,16 +28,7 @@ function openBrowser(url) {
   const command = paths.isWindows ? 'explorer.exe' : '/usr/bin/open';
   spawn(command, [url], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
 }
-function pidIsRunning(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === 'EPERM';
-  }
-}
-function acquireManagerLock() {
+async function acquireManagerLock() {
   try {
     const fd = fs.openSync(managerLock, 'wx');
     fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, url: null }));
@@ -44,13 +36,9 @@ function acquireManagerLock() {
     return true;
   } catch (error) {
     if (error.code !== 'EEXIST') throw error;
-    let record = { pid: 0, url: null };
-    try {
-      const raw = fs.readFileSync(managerLock, 'utf8');
-      record = raw.trim().startsWith('{') ? JSON.parse(raw) : { pid: Number(raw), url: null };
-    } catch (_) {}
-    if (pidIsRunning(Number(record.pid))) {
-      if (record.url) openBrowser(record.url);
+    const found = await inspectLock(managerLock);
+    if (found.state !== 'stale') {
+      if (found.url) openBrowser(found.url);
       return false;
     }
     try {
@@ -62,7 +50,6 @@ function acquireManagerLock() {
     return true;
   }
 }
-if (!acquireManagerLock()) process.exit(0);
 function releaseManagerLock() {
   try {
     const raw = fs.readFileSync(managerLock, 'utf8');
@@ -243,6 +230,7 @@ const server = http.createServer((req, res) => {
     return res.end('Forbidden');
   }
   const url = new URL(req.url, 'http://127.0.0.1');
+  if (url.pathname === ALIVE_ROUTE) return json(res, 200, { app: MANAGER_APP, pid: process.pid });
   if (url.pathname.startsWith('/api/')) return api(req, res, url.pathname);
   let relative = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
   if (!/^[a-zA-Z0-9._-]+$/.test(relative)) {
@@ -261,10 +249,18 @@ const server = http.createServer((req, res) => {
   }
 });
 
-server.listen(0, '127.0.0.1', () => {
-  boundPort = server.address().port;
-  const url = `http://127.0.0.1:${boundPort}/`;
-  fs.writeFileSync(managerLock, JSON.stringify({ pid: process.pid, url }));
-  openBrowser(url);
-  process.stdout.write(`SAP MCP Desktop Bridge is running at ${url}\n`);
-});
+acquireManagerLock()
+  .then(acquired => {
+    if (!acquired) process.exit(0);
+    server.listen(0, '127.0.0.1', () => {
+      boundPort = server.address().port;
+      const url = `http://127.0.0.1:${boundPort}/`;
+      fs.writeFileSync(managerLock, JSON.stringify({ pid: process.pid, url }));
+      openBrowser(url);
+      process.stdout.write(`SAP MCP Desktop Bridge is running at ${url}\n`);
+    });
+  })
+  .catch(error => {
+    process.stderr.write(`${error.stack || error.message}\n`);
+    process.exit(1);
+  });

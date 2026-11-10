@@ -4,6 +4,7 @@ const fs = require('fs'),
   path = require('path');
 const { spawn } = require('child_process');
 const paths = require('./paths');
+const { inspectLock } = require('./manager-lock');
 let window,
   manager,
   quitting = false;
@@ -40,7 +41,7 @@ function trusted(event) {
 }
 app
   .whenReady()
-  .then(() => {
+  .then(async () => {
     if (!primary) return;
     log('Electron ready');
     session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
@@ -82,12 +83,8 @@ app
         window.show();
       });
     };
-    const lock = path.join(paths.dataDir, 'manager.lock');
-    try {
-      const record = JSON.parse(fs.readFileSync(lock, 'utf8'));
-      process.kill(record.pid, 0);
-      if (/^http:\/\/127\.0\.0\.1:\d+\/$/.test(record.url)) open(record.url);
-    } catch (_) {}
+    const found = await inspectLock(path.join(paths.dataDir, 'manager.lock'));
+    if (found.state === 'running') open(found.url);
     if (!managerOrigin) {
       manager = spawn(node, [path.join(__dirname, 'manager.js')], {
         env: { ...process.env, SAP_MCP_BRIDGE_NO_BROWSER: '1' },
