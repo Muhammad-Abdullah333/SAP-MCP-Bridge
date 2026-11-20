@@ -320,6 +320,94 @@ replace(
 
 fs.mkdirSync(TR_OUT_DIR, { recursive: true });
 fs.writeFileSync(path.join(TR_OUT_DIR, 'transports.js'), Buffer.from(text, 'utf8'));
+
+// ------------------------------------------------------- resolvePackage fallback
+// abap-adt-mcp/dist/index.js. Package gates (customOnly, allowedPackages) learn an
+// existing object's package from the CTS check (transportInfo). A client closed for
+// repository changes, such as a test client, refuses that check, so every package-gated
+// call was denied. The package is now also read from ADT quick search, which needs no
+// change authorization. The policy stays closed: no answer still means denied.
+const IDX_UPSTREAM = 'build/base-payload/app/vendor/node_modules/abap-adt-mcp/dist/index.js';
+const IDX_OUT_DIR = 'packaging/vendor-patch/node_modules/abap-adt-mcp/dist';
+const IDX_REL = 'node_modules/abap-adt-mcp/dist/index.js';
+const idxHash = crypto.createHash('sha256').update(fs.readFileSync(IDX_UPSTREAM)).digest('hex');
+text = fs.readFileSync(IDX_UPSTREAM, 'utf8');
+
+replace(
+  `                yield this.ensureLogin(name, false);
+                const info = yield dest.adtClient.transportInfo(key);
+                const pkg = (info === null || info === void 0 ? void 0 : info.DEVCLASS) ? String(info.DEVCLASS).toUpperCase() : undefined;
+                if (pkg)
+                    dest.packageCache.set(key, pkg);
+                return pkg;`,
+  `                yield this.ensureLogin(name, false);
+                let pkg;
+                try {
+                    const info = yield dest.adtClient.transportInfo(key);
+                    pkg = (info === null || info === void 0 ? void 0 : info.DEVCLASS) ? String(info.DEVCLASS).toUpperCase() : undefined;
+                }
+                catch (_b) {
+                    pkg = undefined;
+                }
+                if (!pkg) {
+                    // Bridge patch: the CTS check fails on a client closed for repository
+                    // changes. Quick search returns the package without any change
+                    // authorization. Only a hit whose URI is exactly this object counts, so
+                    // a prefix match on another object can never supply its package.
+                    try {
+                        const norm = (u) => { try { return decodeURIComponent(String(u || '')).toLowerCase(); } catch (_c) { return String(u || '').toLowerCase(); } };
+                        const want = norm(key);
+                        const hits = yield dest.adtClient.searchObject(norm(key.split('/').pop()), undefined, 100);
+                        const hit = (hits || []).find((h) => norm((0, policy_js_1.objectUrlOf)(h['adtcore:uri'])) === want);
+                        const found = hit && hit['adtcore:packageName'];
+                        pkg = found ? String(found).toUpperCase() : undefined;
+                    }
+                    catch (_d) {
+                        pkg = undefined;
+                    }
+                }
+                if (pkg)
+                    dest.packageCache.set(key, pkg);
+                return pkg;`,
+  'resolvePackage falls back to ADT quick search when the CTS check gives no package',
+);
+
+fs.mkdirSync(IDX_OUT_DIR, { recursive: true });
+fs.writeFileSync(path.join(IDX_OUT_DIR, 'index.js'), Buffer.from(text, 'utf8'));
+
+// ------------------------------------------------------- closed client is not a lock
+// abap-adt-mcp/dist/lib/adtErrorHints.js. SAP reports TK730 ("changes to repository or
+// cross-client customizing are not permitted" in this client) as ExceptionResourceNoAccess,
+// the same exception it uses for locks, and the classifier called every one of those a lock.
+// runSnippet on a test client then told the model to unlock and check SM12.
+const HINT_UPSTREAM = 'build/base-payload/app/vendor/node_modules/abap-adt-mcp/dist/lib/adtErrorHints.js';
+const HINT_REL = 'node_modules/abap-adt-mcp/dist/lib/adtErrorHints.js';
+const hintHash = crypto.createHash('sha256').update(fs.readFileSync(HINT_UPSTREAM)).digest('hex');
+text = fs.readFileSync(HINT_UPSTREAM, 'utf8');
+
+replace(
+  `    staleLockHandle: {`,
+  `    // Bridge patch: a client closed for repository changes (SCC4), reported by SAP with
+    // the same exception as a lock. Nothing is locked there, so the lock advice misled.
+    repositoryClosed: {
+        hint: 'This SAP client does not allow changes to repository objects or cross-client customizing (SAP message TK730, set per client in SCC4). Nothing is locked and retrying will not help. Anything that creates or changes an object cannot work here, runSnippet included, because it creates a temporary class. Read data with runQuery or tableContents, run an existing class with runClass, and create or change objects on a development client.',
+        nextTools: ['listSystems'],
+    },
+    staleLockHandle: {`,
+  'adtErrorHints has a repositoryClosed kind',
+);
+replace(
+  `    else if (has(/ExceptionResourceNoAccess|locked by|`,
+  `    else if ((((_f = err.properties) === null || _f === void 0 ? void 0 : _f['T100KEY-ID']) === 'TK' && String(err.properties['T100KEY-NO']) === '730')
+        || has(/T100KEY-ID:\\s*TK\\b[\\s,|]*T100KEY-NO:\\s*730\\b|changes to (the )?repository (or|and) (to )?cross-client customizing( objects)? are (not permitted|prohibited)/i)) {
+        // Bridge patch: checked before the lock rule, which matches the same exception type.
+        kind = 'repositoryClosed';
+    }
+    else if (has(/ExceptionResourceNoAccess|locked by|`,
+  'adtErrorHints tells a client closed for changes (TK730) from a lock',
+);
+
+fs.writeFileSync(path.join(OUT_DIR, 'adtErrorHints.js'), Buffer.from(text, 'utf8'));
 fs.writeFileSync(
   'packaging/vendor-patch/upstream.json',
   Buffer.from(JSON.stringify({
@@ -328,9 +416,13 @@ fs.writeFileSync(
     files: {
       [REL]: { upstreamSha256: upstreamHash },
       [TR_REL]: { upstreamSha256: trHash },
+      [IDX_REL]: { upstreamSha256: idxHash },
+      [HINT_REL]: { upstreamSha256: hintHash },
     },
   }, null, 2) + '\n', 'utf8'),
 );
 console.log('\nupstream sha256: ' + upstreamHash + '  (policy.js)');
 console.log('upstream sha256: ' + trHash + '  (transports.js)');
-console.log('patched bytes  : ' + policyBytes + ' / ' + fs.statSync(path.join(TR_OUT_DIR, 'transports.js')).size);
+console.log('upstream sha256: ' + idxHash + '  (index.js)');
+console.log('upstream sha256: ' + hintHash + '  (adtErrorHints.js)');
+console.log('patched bytes  : ' + policyBytes + ' / ' + fs.statSync(path.join(TR_OUT_DIR, 'transports.js')).size + ' / ' + fs.statSync(path.join(IDX_OUT_DIR, 'index.js')).size);

@@ -7,6 +7,12 @@
     },
     "node_modules/abap-adt-api/build/api/transports.js": {
       "upstreamSha256": "ed7fd6f5c47672844d76da3f17fe7ea8a0a69714273e3248056dbfaca1470852"
+    },
+    "node_modules/abap-adt-mcp/dist/index.js": {
+      "upstreamSha256": "8bec47fca8c2b52343a8f4ad220463d522b7df63a4363b57192ced3512c70bfa"
+    },
+    "node_modules/abap-adt-mcp/dist/lib/adtErrorHints.js": {
+      "upstreamSha256": "31cd3ef59d5359f5434e11fdef842e590ce060125d73478ebbc0ffea1d201910"
     }
   }
 }

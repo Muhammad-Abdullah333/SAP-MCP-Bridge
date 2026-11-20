@@ -17,6 +17,8 @@ Thumbs.db
 Microsoft/
 # Local build output: packaging/windows/build.ps1 writes here by default.
 dist/
+# The patched abap-adt-mcp files sit in a dist/ folder of their own and are source.
+!packaging/vendor-patch/node_modules/**/dist/
 
 # Local knowledge graph (graphify); holds absolute local paths, never published.
 graphify-out/

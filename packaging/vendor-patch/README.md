@@ -1,7 +1,7 @@
 # Vendored policy-engine patch
 
 `abap-adt-mcp` enforces the per-destination safety policy before a tool call reaches SAP.
-Bridge ships a patched copy of one file from it, `dist/lib/policy.js`, because the upstream
+Bridge ships a patched copy of `dist/lib/policy.js` from it, because the upstream
 version could not express or enforce what the manager offers:
 
 | Change | Why |
@@ -12,6 +12,18 @@ version could not express or enforce what the manager offers:
 | Whole activation batch checked | Upstream checked `objects.slice(0, 50)` and allowed the rest. An oversized batch is now refused rather than partly checked. |
 | Quoted identifiers in SQL | `SELECT * FROM "USR02"` referenced no table as far as the parser was concerned, so `deniedTables` did not see it. |
 | No target, no pass | A write tool called without its target object skipped the package check entirely. It is now refused on a closed package policy. |
+
+A second file from `abap-adt-mcp` is patched, `dist/index.js`:
+
+| Change | Why |
+| --- | --- |
+| `resolvePackage` falls back to ADT quick search | The package of an existing object came only from the CTS check (`transportInfo`). A client closed for repository changes, such as a test client, refuses that check, so `customOnly` and `allowedPackages` denied every call, even `runClass` on a `$TMP` class. When the CTS check fails or returns no package, quick search supplies it, which needs no change authorization. Only a hit whose URI is exactly the object counts, and no answer still means denied. |
+
+And `dist/lib/adtErrorHints.js`:
+
+| Change | Why |
+| --- | --- |
+| A client closed for changes is not a lock | SAP reports TK730 ("changes to repository or cross-client customizing are not permitted", set per client in SCC4) with `ExceptionResourceNoAccess`, the exception it also uses for locks, and every one of those was classified as `locked`. `runSnippet` on a test client then advised unlocking and SM12. It is now `repositoryClosed`, with a hint that says what the client allows instead. |
 
 One file from `abap-adt-api` is patched as well, `build/api/transports.js`:
 
@@ -33,10 +45,10 @@ unpatched.
 1. Update `abap-adt-mcp` (or `abap-adt-api`) in `packaging/vendor/package.json` and `package-lock.json`, then run
    `python packaging/fetch-base.py`. `UPSTREAM` and `TR_UPSTREAM` in `make-patch.js` already point at the fetched files.
 2. Run `node packaging/vendor-patch/make-patch.js` from the project root. It applies three
-   replacements to `policy.js` — `parsePolicy`, `tablesInSql` and `evaluatePolicy` — and one
-   to `transports.js`, and fails loudly if any anchor no longer matches, which is the signal
+   replacements to `policy.js` — `parsePolicy`, `tablesInSql` and `evaluatePolicy` — one
+   to `index.js` (`resolvePackage`), two to `adtErrorHints.js` and one to `transports.js`, and fails loudly if any anchor no longer matches, which is the signal
    to review the change by hand.
-3. It also rewrites `upstream.json` with both upstream files' digests; check that diff.
+3. It also rewrites `upstream.json` with every upstream file's digest; check that diff.
 4. Run `npm test`. `test/policy-engine-test.js` asserts 110 decisions and
    `test/transport-release-test.js` the release request bodies; both fail against an
    unpatched engine, so they will tell you if a patch did not take.

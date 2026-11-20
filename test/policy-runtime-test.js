@@ -20,6 +20,7 @@ const { spawn } = require('child_process');
 const project = path.join(__dirname, '..');
 const vendor = path.join(project, 'build', 'base-payload', 'app', 'vendor', 'node_modules');
 const patch = path.join(project, 'packaging', 'vendor-patch', 'node_modules', 'abap-adt-mcp', 'dist', 'lib', 'policy.js');
+const patchIndex = path.join(project, 'packaging', 'vendor-patch', 'node_modules', 'abap-adt-mcp', 'dist', 'index.js');
 
 if (!fs.existsSync(path.join(vendor, 'abap-adt-mcp', 'dist', 'index.js'))) {
   console.log('SKIP: the vendored MCP server is not present (build/ is not in version control).');
@@ -33,11 +34,12 @@ fs.mkdirSync(path.dirname(server), { recursive: true });
 fs.cpSync(path.join(vendor, 'abap-adt-mcp'), server, { recursive: true });
 // Overlay exactly what the installer ships, so this tests the patched engine.
 fs.copyFileSync(patch, path.join(server, 'dist', 'lib', 'policy.js'));
+fs.copyFileSync(patchIndex, path.join(server, 'dist', 'index.js'));
 
 /** Run one server session with `policy` and return the result of each call, in order. */
-function session(policy, calls) {
+function session(policy, calls, url = 'https://unreachable.invalid') {
   return new Promise((resolve, reject) => {
-    const destination = { url: 'https://unreachable.invalid', client: '100', user: 'u', password: 'p', default: true, policy };
+    const destination = { url, authType: 'basic', client: '100', user: 'u', password: 'p', default: true, policy };
     const child = spawn(process.execPath, [path.join(server, 'dist', 'index.js')], {
       stdio: ['pipe', 'pipe', 'ignore'],
       env: { ...process.env, NODE_PATH: vendor, SAP_SYSTEMS: JSON.stringify({ T: destination }), MCP_TOOLSETS: 'core,source,data,objects,runtime,analysis' },
@@ -180,6 +182,99 @@ function assertAllowed(text, name) {
     assertBlocked(noUrl, 'customOnly', 'a delete with no target must be refused, not waved through');
   }
 
+  // A client closed for repository changes (a test client) refuses the CTS check that
+  // normally tells the engine an existing object's package, so every package-gated call
+  // used to be denied. The package is now read from ADT quick search as well. This runs
+  // against a stand-in SAP that refuses transportchecks, in both ways SAP does: an HTTP
+  // error, and a 200 that carries no DEVCLASS.
+  {
+    const http = require('http');
+    const objects = {
+      zcl_fi_asset_chg_test: '$TMP',
+      zcl_custom: 'ZFIN',
+      cl_gui_alv_grid: 'SLIS',
+      '/abc/zcl_ns': '/ABC/CORE',
+      // Quick search is a prefix search: the only hit for ZCL_SHORT is a longer name in a
+      // standard package, and it must never be taken for ZCL_SHORT itself.
+      zcl_shortened: 'SAPBASIS',
+    };
+    const seen = [];
+    for (const mode of ['error', 'empty']) {
+      const sap = http.createServer((req, res) => {
+        req.resume();
+        req.on('end', () => {
+          const url = new URL(req.url, 'http://x');
+          seen.push(req.method + ' ' + url.pathname);
+          res.setHeader('x-csrf-token', 'tok');
+          if (url.pathname.endsWith('/cts/transportchecks')) {
+            if (mode === 'error') { res.statusCode = 403; res.end('closed for repository changes'); return; }
+            res.setHeader('content-type', 'application/vnd.sap.as+xml');
+            res.end('<?xml version="1.0"?><asx:abap xmlns:asx="http://www.sap.com/abapxml"><asx:values><DATA><RESULT>E</RESULT><DEVCLASS/></DATA></asx:values></asx:abap>');
+            return;
+          }
+          if (url.pathname.endsWith('/informationsystem/search')) {
+            const q = (url.searchParams.get('query') || '').toLowerCase().replace(/\*$/, '');
+            const refs = Object.entries(objects)
+              .filter(([n]) => n.startsWith(q))
+              .map(([n, p]) => `<adtcore:objectReference adtcore:uri="/sap/bc/adt/oo/classes/${encodeURIComponent(n)}" adtcore:type="CLAS/OC" adtcore:name="${n.toUpperCase()}" adtcore:packageName="${p}"/>`);
+            res.setHeader('content-type', 'application/xml');
+            res.end(`<?xml version="1.0"?><adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core">${refs.join('')}</adtcore:objectReferences>`);
+            return;
+          }
+          res.end('');
+        });
+      });
+      await new Promise(r => sap.listen(0, '127.0.0.1', r));
+      const url = 'http://127.0.0.1:' + sap.address().port;
+      try {
+        const policy = { customOnly: true, allowedTools: ['runClass'] };
+        const [tmp, custom, ns, standard, unknown, prefixOnly] = await session(policy, [
+          { tool: 'runClass', args: { className: 'ZCL_FI_ASSET_CHG_TEST' } },
+          { tool: 'runClass', args: { className: 'ZCL_CUSTOM' } },
+          { tool: 'runClass', args: { className: '/ABC/ZCL_NS' } },
+          { tool: 'runClass', args: { className: 'CL_GUI_ALV_GRID' } },
+          { tool: 'runClass', args: { className: 'ZCL_NOT_THERE' } },
+          { tool: 'runClass', args: { className: 'ZCL_SHORT' } },
+        ], url);
+        assertAllowed(tmp, `[CTS ${mode}] a $TMP class must pass the customOnly gate when only quick search knows its package`);
+        assertAllowed(custom, `[CTS ${mode}] a Z package class must pass the customOnly gate`);
+        assertAllowed(ns, `[CTS ${mode}] a namespaced package class must pass the customOnly gate`);
+        assertBlocked(standard, 'customOnly', `[CTS ${mode}] a standard class must still be refused`);
+        assertBlocked(unknown, 'customOnly', `[CTS ${mode}] an object the lookup cannot place must be refused`);
+        assert.match(unknown, /could not determine/, 'an unknown package is the closed-policy denial');
+        assertBlocked(prefixOnly, 'customOnly', `[CTS ${mode}] a longer name matched by prefix must not stand in for the object`);
+        assert.match(prefixOnly, /could not determine/, 'a prefix-only hit is no answer');
+      } finally {
+        sap.close();
+      }
+    }
+    assert.ok(seen.some(s => s.includes('/cts/transportchecks')), 'the CTS check must be tried first');
+    assert.ok(seen.some(s => s.includes('/informationsystem/search')), 'quick search must be the fallback');
+
+    // allowedPackages takes the same path.
+    const sap = http.createServer((req, res) => {
+      req.resume();
+      res.setHeader('x-csrf-token', 'tok');
+      if (req.url.includes('/cts/transportchecks')) { res.statusCode = 403; res.end('no'); return; }
+      if (req.url.includes('/informationsystem/search')) {
+        res.setHeader('content-type', 'application/xml');
+        res.end('<adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core"><adtcore:objectReference adtcore:uri="/sap/bc/adt/oo/classes/zcl_custom" adtcore:name="ZCL_CUSTOM" adtcore:packageName="ZFIN"/></adtcore:objectReferences>');
+        return;
+      }
+      res.end('');
+    });
+    await new Promise(r => sap.listen(0, '127.0.0.1', r));
+    try {
+      const url = 'http://127.0.0.1:' + sap.address().port;
+      const [inList] = await session({ allowedPackages: ['ZFIN*'] }, [{ tool: 'runClass', args: { className: 'ZCL_CUSTOM' } }], url);
+      const [outOfList] = await session({ allowedPackages: ['ZHR*'] }, [{ tool: 'runClass', args: { className: 'ZCL_CUSTOM' } }], url);
+      assertAllowed(inList, 'allowedPackages must accept a package that only quick search supplied');
+      assertBlocked(outOfList, 'allowedPackages', 'allowedPackages must refuse it when it is not on the list');
+    } finally {
+      sap.close();
+    }
+  }
+
   // The manager's warning about groups the namespace limit does not cover is decided by
   // its own copy of the tool-list matching. If that copy ever disagreed with the engine,
   // the form could report a group as closed while the server still let it through. So
@@ -228,7 +323,7 @@ function assertAllowed(text, name) {
   }
 
   fs.rmSync(root, { recursive: true, force: true });
-  console.log(`PASS: ${checks} decisions enforced by the real bundled MCP server - readOnly, customOnly, allowedPackages, allowedTools, deniedTools, deniedTables including quoted identifiers, allowedTables, allowFreeSql and writes with no target. The manager agreed with the real engine on ${agreements} tool-list decisions behind its namespace warning.`);
+  console.log(`PASS: ${checks} decisions enforced by the real bundled MCP server - readOnly, customOnly, allowedPackages, allowedTools, deniedTools, deniedTables including quoted identifiers, allowedTables, allowFreeSql and writes with no target, and package resolution when the CTS check is refused. The manager agreed with the real engine on ${agreements} tool-list decisions behind its namespace warning.`);
 })().catch(error => {
   fs.rmSync(root, { recursive: true, force: true });
   console.error(error);
