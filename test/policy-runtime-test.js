@@ -16,6 +16,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { buildDestination } = require('../src/system-config');
 
 const project = path.join(__dirname, '..');
 const vendor = path.join(project, 'build', 'base-payload', 'app', 'vendor', 'node_modules');
@@ -39,7 +40,9 @@ fs.copyFileSync(patchIndex, path.join(server, 'dist', 'index.js'));
 /** Run one server session with `policy` and return the result of each call, in order. */
 function session(policy, calls, url = 'https://unreachable.invalid') {
   return new Promise((resolve, reject) => {
-    const destination = { url, authType: 'basic', client: '100', user: 'u', password: 'p', default: true, policy };
+    // Built exactly as the manager builds it, so the server sees what Bridge really sends
+    // (including the data-access keys src/system-config.js states for engine 2.6.0+).
+    const destination = buildDestination({ id: 'T', url, authType: 'basic', client: '100', user: 'u', default: true, policy }, { password: 'p' });
     const child = spawn(process.execPath, [path.join(server, 'dist', 'index.js')], {
       stdio: ['pipe', 'pipe', 'ignore'],
       env: { ...process.env, NODE_PATH: vendor, SAP_SYSTEMS: JSON.stringify({ T: destination }), MCP_TOOLSETS: 'core,source,data,objects,runtime,analysis' },

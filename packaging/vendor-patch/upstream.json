@@ -3,16 +3,16 @@
   "note": "Patched vendor files overlaid onto the base payload by build-desktop.py. The build verifies the upstream digest first and refuses to build if the base package ships a different file, so a future abap-adt-mcp or abap-adt-api will never be patched blindly.",
   "files": {
     "node_modules/abap-adt-mcp/dist/lib/policy.js": {
-      "upstreamSha256": "05c8afe8877d5820d1b0617a1e4a2de012479ed779e9491c843e194c3fd80455"
+      "upstreamSha256": "8525bb4cd1ba309a30d8560c0950a60e25368a6eb726814a1d1a4ce184884dd8"
     },
     "node_modules/abap-adt-api/build/api/transports.js": {
       "upstreamSha256": "ed7fd6f5c47672844d76da3f17fe7ea8a0a69714273e3248056dbfaca1470852"
     },
     "node_modules/abap-adt-mcp/dist/index.js": {
-      "upstreamSha256": "8bec47fca8c2b52343a8f4ad220463d522b7df63a4363b57192ced3512c70bfa"
+      "upstreamSha256": "4f9a36d40829e5a037d32986f1681ea1660486e4cb28686ab93e7b4e63860b7d"
     },
     "node_modules/abap-adt-mcp/dist/lib/adtErrorHints.js": {
-      "upstreamSha256": "31cd3ef59d5359f5434e11fdef842e590ce060125d73478ebbc0ffea1d201910"
+      "upstreamSha256": "5dc61fec4086c07d27a1ed91474e5053553968e947206424eaaee3de00f80c62"
     }
   }
 }

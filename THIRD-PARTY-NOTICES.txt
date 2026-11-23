@@ -1,4 +1,4 @@
-SAP MCP Desktop Bridge bundles Node.js, abap-adt-mcp 2.1.0 and koffi 3.3.1 with their runtime dependencies.
+SAP MCP Desktop Bridge bundles Node.js, abap-adt-mcp 2.8.2 and koffi 3.3.1 with their runtime dependencies.
 
 Node.js is distributed under its own license and third-party notices in LICENSES/Node-LICENSE.
 abap-adt-mcp is MIT-licensed; its license is in vendor/node_modules/abap-adt-mcp/LICENSE.

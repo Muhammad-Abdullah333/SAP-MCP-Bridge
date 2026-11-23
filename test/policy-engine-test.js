@@ -34,9 +34,24 @@ const { evaluatePolicy, parsePolicy, tablesInSql } = require(path.join(dist, 'li
 // Stands in for SAP: anything whose URL mentions a z/y object sits in a custom package.
 const ctx = { resolvePackage: async url => (/\/(z|y)/i.test(url) ? 'ZCUSTOM' : 'SAPBASIS') };
 
+// What Bridge actually hands the engine: src/system-config.js states allowDataPreview: true
+// on every destination unless the connection itself says otherwise (engine 2.6.0+ closes
+// table reads when the key is absent). The raw engine behaviour is asserted separately
+// below with expectRaw.
+const { buildDestination } = require('../src/system-config');
+const asSent = policy =>
+  buildDestination({ id: 'T', url: 'https://sap.example', client: '100', authType: 'basic', policy }, { password: 'x' }).policy;
+
 let checked = 0;
-async function expect(outcome, name, policy, tool, args, gate) {
+async function expectRaw(outcome, name, policy, tool, args, gate) {
   const r = await evaluatePolicy(policy, tool, args, ctx);
+  const want = outcome === 'allow';
+  assert.equal(r.allowed, want, `${name}: expected ${outcome}, got ${r.allowed ? 'allow' : 'deny'}${r.reason ? ' (' + r.reason + ')' : ''}`);
+  if (gate) assert.equal(r.gate, gate, `${name}: expected gate ${gate}, got ${r.gate}`);
+  checked += 1;
+}
+async function expect(outcome, name, policy, tool, args, gate) {
+  const r = await evaluatePolicy(policy === undefined ? undefined : asSent(policy), tool, args, ctx);
   const want = outcome === 'allow';
   assert.equal(r.allowed, want, `${name}: expected ${outcome}, got ${r.allowed ? 'allow' : 'deny'}${r.reason ? ' (' + r.reason + ')' : ''}`);
   if (gate) assert.equal(r.gate, gate, `${name}: expected gate ${gate}, got ${r.gate}`);
@@ -57,6 +72,19 @@ const activation = n => ({ objects: JSON.stringify(Array.from({ length: n }, (_,
   await allow('readOnly still allows reads', { readOnly: true }, 'getObjectSource', { objectSourceUrl: '/x' });
   // Worth stating outright: read-only does not keep anyone out of table data.
   await allow('readOnly does NOT block reading a table', { readOnly: true }, 'tableContents', { ddicEntityName: 'USR02' });
+
+  // ---- engine 2.6.0 data gates, kept by the patch --------------------------
+  // Raw engine: table data is closed until a policy opens it, with or without a policy.
+  await expectRaw('deny', 'no policy: table data closed', undefined, 'tableContents', { ddicEntityName: 'T000' }, 'allowDataPreview');
+  await expectRaw('deny', 'policy without the key: table data closed', { readOnly: true }, 'tableContents', { ddicEntityName: 'T000' }, 'allowDataPreview');
+  await expectRaw('allow', 'no policy: other read tools still pass', undefined, 'getObjectSource', { objectSourceUrl: '/x' });
+  await expectRaw('allow', 'allowFreeSql implies allowDataPreview', { allowFreeSql: true }, 'runQuery', { sqlQuery: 'SELECT * FROM t000' });
+  await expectRaw('deny', 'allowDataPreview false closes SQL too', { allowDataPreview: false, allowFreeSql: true }, 'runQuery', { sqlQuery: 'SELECT * FROM t000' }, 'allowFreeSql');
+  // As Bridge sends it: both read levels may read a named table; only level 1 may write SQL.
+  await allow('Bridge read level 0 reads a named table', { readOnly: true, allowFreeSql: false }, 'tableContents', { ddicEntityName: 'T000' });
+  await deny('Bridge read level 0 refuses its own SQL', { readOnly: true, allowFreeSql: false }, 'runQuery', { sqlQuery: 'SELECT * FROM t000' }, 'allowFreeSql');
+  await allow('Bridge read level 1 runs its own SQL', { readOnly: true, allowFreeSql: true }, 'runQuery', { sqlQuery: 'SELECT * FROM t000' });
+  await deny('a connection stating allowDataPreview false stays closed', { allowDataPreview: false }, 'tableContents', { ddicEntityName: 'T000' }, 'allowDataPreview');
 
   // ---- wildcards, which already worked upstream ----------------------------
   await allow('Z* allows a custom write', { allowedPackages: ['Z*', 'Y*'] }, 'setObjectSource', zWrite);

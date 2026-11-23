@@ -22,7 +22,16 @@ function buildDestination(item, secret) {
       ...(secret?.oauthClientSecret ? { clientSecret: secret.oauthClientSecret } : {}),
     };
   if (item.sso2) destination.sso2 = item.sso2;
-  if (item.policy) destination.policy = item.policy;
+  // The engine (abap-adt-mcp 2.6.0 and later) closes table reads unless the policy opens
+  // them. Both of Bridge's read levels mean "a table it names can be read"; they differ only
+  // in whether it may compose its own SQL (allowFreeSql). So reading named tables is stated
+  // explicitly, unless a connection itself says false.
+  // Same precedence as before: the connection's own policy, else one carried in baseConfig.
+  destination.policy = { ...(item.policy || destination.policy || {}) };
+  if (destination.policy.allowDataPreview === undefined) destination.policy.allowDataPreview = true;
+  // The form reads a policy without allowFreeSql as read level 1 (its own SQL allowed), as
+  // the engine did before 2.6.0. State it, so what the form shows is what the engine enforces.
+  if (destination.policy.allowFreeSql === undefined) destination.policy.allowFreeSql = destination.policy.allowDataPreview !== false;
   if (Object.hasOwn(item, 'servername')) {
     destination.tls = { ...(destination.tls || {}) };
     if (item.servername) destination.tls.servername = item.servername;

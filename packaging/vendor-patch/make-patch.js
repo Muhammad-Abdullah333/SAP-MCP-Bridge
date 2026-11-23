@@ -80,12 +80,14 @@ const MAX_ACTIVATION_OBJECTS = 200;
 /**
  * Decide whether \`toolName(args)\` may run on a destination with \`policy\`.
  * Gates run in order: readOnly, allowedTools, deniedTools, allowFreeSql,
- * deniedTables, allowedTables, package gates (allowedPackages and customOnly,
- * both closed: unknown package => denied), allowedTransports.
+ * allowDataPreview, deniedTables, allowedTables, package gates (allowedPackages
+ * and customOnly, both closed: unknown package => denied), allowedTransports.
+ * Since upstream 2.6.0 a destination without a policy passes every gate except
+ * the two data gates, which stay closed until the policy opens them.
  */
 async function evaluatePolicy(policy, toolName, args, ctx) {
     if (!policy)
-        return { allowed: true };
+        policy = {};
     const a = args || {};
     const deny = (gate, reason) => ({ allowed: false, gate, reason });
 
@@ -101,11 +103,23 @@ async function evaluatePolicy(policy, toolName, args, ctx) {
     if (deniedToolMatches(policy.deniedTools, toolName)) {
         return deny('deniedTools', \`\${toolName} is listed in deniedTools\`);
     }
-    if (policy.allowFreeSql === false) {
-        if (toolName === 'runQuery')
-            return deny('allowFreeSql', 'free SQL (runQuery) is disabled; use tableContents on an allowed table');
-        if (toolName === 'tableContents' && a.sqlQuery)
-            return deny('allowFreeSql', 'tableContents with sqlQuery counts as free SQL, which is disabled');
+    // Upstream 2.6.0 data gates, kept as upstream wrote them: reading table data is
+    // off unless the policy opens it, and allowFreeSql implies allowDataPreview.
+    if (DATA_TOOLS.has(toolName)) {
+        const access = dataAccess(policy);
+        const how = (key, env) => policy.allowDataPreview === false && key === 'allowFreeSql'
+            ? 'its policy states "allowDataPreview": false, which closes SQL as well'
+            : policy[key] === false
+                ? \`its policy states "\${key}": false\`
+                : \`nothing allows it yet. To allow it, set "\${key}": true in the policy of this destination in systems.json (\${env}=1 sets the default for destinations that do not state it) and restart the server\`;
+        if ((toolName === 'runQuery' || a.sqlQuery) && !access.allowFreeSql) {
+            const what = toolName === 'runQuery' ? 'free SQL (runQuery) is off on this destination' : 'tableContents with sqlQuery counts as free SQL, which is off on this destination';
+            const alternative = access.allowDataPreview ? '; tableContents without sqlQuery still reads a table by name' : '';
+            return deny('allowFreeSql', \`\${what}: \${how('allowFreeSql', 'MCP_ALLOW_FREE_SQL')}\${alternative}\`);
+        }
+        if (!access.allowDataPreview) {
+            return deny('allowDataPreview', \`reading table data (\${toolName}) is off on this destination: \${how('allowDataPreview', 'MCP_ALLOW_DATA_PREVIEW')}\`);
+        }
     }
 
     const referencedTables = () => {
@@ -333,42 +347,48 @@ const IDX_REL = 'node_modules/abap-adt-mcp/dist/index.js';
 const idxHash = crypto.createHash('sha256').update(fs.readFileSync(IDX_UPSTREAM)).digest('hex');
 text = fs.readFileSync(IDX_UPSTREAM, 'utf8');
 
+// Since 2.8.0 upstream asks the repository node path when the transport check answers
+// with a body it cannot parse (SAP_BASIS 7.40). That path is not taken on an HTTP or
+// CTS error, which is what a client closed for repository changes returns, so the
+// quick-search fallback is still needed. It runs after upstream's own fallback.
 replace(
-  `                yield this.ensureLogin(name, false);
-                const info = yield dest.adtClient.transportInfo(key);
-                const pkg = (info === null || info === void 0 ? void 0 : info.DEVCLASS) ? String(info.DEVCLASS).toUpperCase() : undefined;
-                if (pkg)
-                    dest.packageCache.set(key, pkg);
-                return pkg;`,
-  `                yield this.ensureLogin(name, false);
-                let pkg;
-                try {
-                    const info = yield dest.adtClient.transportInfo(key);
-                    pkg = (info === null || info === void 0 ? void 0 : info.DEVCLASS) ? String(info.DEVCLASS).toUpperCase() : undefined;
-                }
-                catch (_b) {
+  `                catch (_b) {
                     pkg = undefined;
                 }
-                if (!pkg) {
-                    // Bridge patch: the CTS check fails on a client closed for repository
-                    // changes. Quick search returns the package without any change
-                    // authorization. Only a hit whose URI is exactly this object counts, so
-                    // a prefix match on another object can never supply its package.
-                    try {
-                        const norm = (u) => { try { return decodeURIComponent(String(u || '')).toLowerCase(); } catch (_c) { return String(u || '').toLowerCase(); } };
-                        const want = norm(key);
-                        const hits = yield dest.adtClient.searchObject(norm(key.split('/').pop()), undefined, 100);
-                        const hit = (hits || []).find((h) => norm((0, policy_js_1.objectUrlOf)(h['adtcore:uri'])) === want);
-                        const found = hit && hit['adtcore:packageName'];
-                        pkg = found ? String(found).toUpperCase() : undefined;
-                    }
-                    catch (_d) {
-                        pkg = undefined;
-                    }
+            }
+            if (pkg)
+                dest.packageCache.set(key, pkg);
+            return pkg;
+        });
+    }
+    /** Build (once) the capability profile`,
+  `                catch (_b) {
+                    pkg = undefined;
                 }
-                if (pkg)
-                    dest.packageCache.set(key, pkg);
-                return pkg;`,
+            }
+            if (!pkg) {
+                // Bridge patch: the CTS check fails on a client closed for repository
+                // changes. Quick search returns the package without any change
+                // authorization. Only a hit whose URI is exactly this object counts, so
+                // a prefix match on another object can never supply its package.
+                try {
+                    const norm = (u) => { try { return decodeURIComponent(String(u || '')).toLowerCase(); } catch (_c) { return String(u || '').toLowerCase(); } };
+                    const want = norm(key);
+                    const hits = yield dest.adtClient.searchObject(norm(key.split('/').pop()), undefined, 100);
+                    const hit = (hits || []).find((h) => norm((0, policy_js_1.objectUrlOf)(h['adtcore:uri'])) === want);
+                    const found = hit && hit['adtcore:packageName'];
+                    pkg = found ? String(found).toUpperCase() : undefined;
+                }
+                catch (_d) {
+                    pkg = undefined;
+                }
+            }
+            if (pkg)
+                dest.packageCache.set(key, pkg);
+            return pkg;
+        });
+    }
+    /** Build (once) the capability profile`,
   'resolvePackage falls back to ADT quick search when the CTS check gives no package',
 );
 

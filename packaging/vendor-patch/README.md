@@ -13,11 +13,13 @@ version could not express or enforce what the manager offers:
 | Quoted identifiers in SQL | `SELECT * FROM "USR02"` referenced no table as far as the parser was concerned, so `deniedTables` did not see it. |
 | No target, no pass | A write tool called without its target object skipped the package check entirely. It is now refused on a closed package policy. |
 
+Upstream 2.6.0 closed table data by default (`allowDataPreview`, `allowFreeSql`, both off unless stated, also on a destination without a policy). `evaluatePolicy` keeps those two gates exactly as upstream wrote them. The manager states both keys on every destination (`src/system-config.js`), so Bridge's two read levels behave as before: a named table can always be read, and its own SQL only at the second level.
+
 A second file from `abap-adt-mcp` is patched, `dist/index.js`:
 
 | Change | Why |
 | --- | --- |
-| `resolvePackage` falls back to ADT quick search | The package of an existing object came only from the CTS check (`transportInfo`). A client closed for repository changes, such as a test client, refuses that check, so `customOnly` and `allowedPackages` denied every call, even `runClass` on a `$TMP` class. When the CTS check fails or returns no package, quick search supplies it, which needs no change authorization. Only a hit whose URI is exactly the object counts, and no answer still means denied. |
+| `resolvePackage` falls back to ADT quick search | The package of an existing object came only from the CTS check (`transportInfo`). A client closed for repository changes, such as a test client, refuses that check, so `customOnly` and `allowedPackages` denied every call, even `runClass` on a `$TMP` class. When the CTS check fails or returns no package, quick search supplies it, which needs no change authorization. Only a hit whose URI is exactly the object counts, and no answer still means denied. Since 2.8.0 upstream has its own fallback, the repository node path, but only for a transport-check answer it cannot parse (SAP_BASIS 7.40), not for the error a closed client returns; quick search runs after it. |
 
 And `dist/lib/adtErrorHints.js`:
 
