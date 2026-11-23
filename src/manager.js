@@ -20,7 +20,7 @@ const transfer = require('./transfer').createTransfer();
 const { ensureDir } = require('./storage');
 const { buildDiscoveryUrl } = require('./system-config');
 const { ALIVE_ROUTE, MANAGER_APP, inspectLock } = require('./manager-lock');
-const { LAUNCH_ROUTE, createLaunchAuth, launchUrl } = require('./launch-auth');
+const { LAUNCH_ROUTE, createLaunchAuth, launchUrl, parseLaunchPath } = require('./launch-auth');
 
 ensureDir(paths.dataDir);
 const managerLock = path.join(paths.dataDir, 'manager.lock');
@@ -254,8 +254,9 @@ const server = http.createServer((req, res) => {
   }
   const url = new URL(req.url, 'http://127.0.0.1');
   if (url.pathname === ALIVE_ROUTE) return json(res, 200, { app: MANAGER_APP, pid: process.pid });
-  if (url.pathname === LAUNCH_ROUTE) {
-    const session = auth.redeem(url.searchParams.get('n'), url.searchParams.get('c'));
+  if (url.pathname === LAUNCH_ROUTE || url.pathname.startsWith(LAUNCH_ROUTE + '/')) {
+    const link = parseLaunchPath(url.pathname);
+    const session = link && auth.redeem(link.nonce, link.code);
     if (!session) return openFromIcon(res);
     lastSeen = Date.now();
     // Redirect to the clean address, so the one-time code stays out of the page.
@@ -290,6 +291,20 @@ acquireManagerLock()
       writeLock(managerLock, url);
       openBrowser(launchUrl(url, auth.launchKey));
       process.stdout.write(`SAP MCP Desktop Bridge is running at ${url}\n`);
+      if (webEdition && process.stdin.isTTY) {
+        // The address above is not a way in by itself (it needs a session). If no browser
+        // tab opened, Enter opens a fresh one-time link, also shown here to paste by hand.
+        process.stdout.write(
+          'If no browser tab opened, press Enter in this window to open the manager again.\n',
+        );
+        process.stdin.setEncoding('utf8');
+        process.stdin.on('data', () => {
+          const link = launchUrl(url, auth.launchKey);
+          openBrowser(link);
+          process.stdout.write(`Opening the manager. If no tab opens, paste this one-time link (valid for 1 minute):\n${link}\n`);
+        });
+        process.stdin.resume();
+      }
       if (webEdition) {
         lastSeen = Date.now();
         setInterval(

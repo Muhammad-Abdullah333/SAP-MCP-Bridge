@@ -84,11 +84,22 @@ args = ['$install\src\host.js']
   & (Join-Path $PSScriptRoot 'mcp-runtime-test.ps1') -Install $install
 
   # --- uninstall ----------------------------------------------------------------------
+  # What Claude Desktop or Codex keeps running: a Bridge MCP server on the bundled runtime,
+  # holding node.exe and koffi's native module open. The uninstaller must close it, or
+  # those files stay behind in the install folder.
+  $server=Start-Process -FilePath (Join-Path $install 'runtime\node.exe') -ArgumentList '-e',('"require(process.argv[1]);setInterval(()=>{},1000)"'),('"'+(Join-Path $install 'vendor\node_modules\koffi')+'"') -WindowStyle Hidden -PassThru
+  Start-Sleep -Seconds 2
+  if($server.HasExited) { throw 'The stand-in MCP server did not start' }
   Invoke-Uninstall $box
-  if(Test-Path -LiteralPath (Join-Path $install 'desktop')) { throw 'The uninstaller left the app in place' }
+  Start-Sleep -Seconds 2
+  if(!$server.HasExited) { $server.Kill(); throw 'The uninstaller left a running Bridge MCP server open' }
+  if(Test-Path -LiteralPath $install) {
+    $left=@(Get-ChildItem -LiteralPath $install -Recurse -File | ForEach-Object { $_.FullName.Substring($install.Length) })
+    throw "The uninstaller left files in the install folder: $($left -join ', ')"
+  }
   if(Test-Path -LiteralPath $shortcutFile) { throw 'The uninstaller left the Start menu shortcut' }
   foreach($file in $before.Keys) { if((Get-FileHash -LiteralPath $file).Hash -ne $before[$file]) { throw "Uninstall changed saved data: $file" } }
-  Write-Output 'PASS: uninstall removes the app, shortcut and Settings > Apps entry and keeps connections, certificates and passwords.'
+  Write-Output 'PASS: uninstall closes a running Bridge MCP server, removes the whole app, shortcut and Settings > Apps entry, and keeps connections, certificates and passwords.'
 } finally {
   Close-Isolation $box
 }

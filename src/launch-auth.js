@@ -18,13 +18,20 @@ const CODE_LIFETIME_MS = 60 * 1000;
 
 const sign = (key, nonce) => crypto.createHmac('sha256', Buffer.from(key, 'hex')).update(nonce).digest('hex');
 
-/** A one-time address that opens the manager at baseUrl, signed with the launch key. */
+/**
+ * A one-time address that opens the manager at baseUrl, signed with the launch key:
+ * /launch/<nonce>/<code>. The code is in the path, not a query string, because Windows
+ * Explorer (which opens the default browser) silently drops an address with a query.
+ */
 function launchUrl(baseUrl, launchKey, now = Date.now()) {
   const nonce = `${now.toString(36)}.${crypto.randomBytes(16).toString('hex')}`;
-  const url = new URL(LAUNCH_ROUTE, baseUrl);
-  url.searchParams.set('n', nonce);
-  url.searchParams.set('c', sign(launchKey, nonce));
-  return url.toString();
+  return new URL(`${LAUNCH_ROUTE}/${nonce}/${sign(launchKey, nonce)}`, baseUrl).toString();
+}
+
+/** The nonce and code of a launch path, or undefined when the path is not one. */
+function parseLaunchPath(pathname) {
+  const match = /^\/launch\/([a-z0-9]{1,16}\.[a-f0-9]{32})\/([a-f0-9]{64})$/.exec(String(pathname));
+  return match ? { nonce: match[1], code: match[2] } : undefined;
 }
 
 function equalHex(a, b) {
@@ -83,4 +90,4 @@ function createLaunchAuth({ now = () => Date.now() } = {}) {
   };
 }
 
-module.exports = { LAUNCH_ROUTE, REQUEST_HEADER, COOKIE, createLaunchAuth, launchUrl };
+module.exports = { LAUNCH_ROUTE, REQUEST_HEADER, COOKIE, createLaunchAuth, launchUrl, parseLaunchPath };

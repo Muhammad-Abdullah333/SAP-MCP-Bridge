@@ -196,11 +196,13 @@ begin
   end;
 end;
 
-function PrepareToInstall(var NeedsRestart: Boolean): String;
+{ Closes every running copy and waits up to ten seconds for them to end. True when none
+  is left. Used before installing and before uninstalling. }
+function CloseAllAndWait: Boolean;
 var
   Attempt: Integer;
 begin
-  Result := '';
+  Result := True;
   if CloseRunningCopies(True) = 0 then
     exit;
   for Attempt := 1 to 20 do
@@ -209,8 +211,34 @@ begin
     if CloseRunningCopies(Attempt mod 4 = 0) = 0 then
       exit;
   end;
-  Result := '{#ManagerName} or a Bridge MCP server is still running and could not be closed. ' +
-            'Close Claude Desktop, Codex and {#ManagerName}, then run Setup again.';
+  Result := False;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if not CloseAllAndWait then
+    Result := '{#ManagerName} or a Bridge MCP server is still running and could not be closed. ' +
+              'Close Claude Desktop, Codex and {#ManagerName}, then run Setup again.';
+end;
+
+{ Uninstalling while Claude Desktop or Codex still runs a Bridge MCP server used to leave
+  node.exe and a native module behind in the install folder, held open by that server.
+  The uninstaller (which runs from a copy in %TEMP%) closes them first, as Setup does. If
+  one cannot be closed, an interactive uninstall asks the person to close the clients and
+  try again; a silent one carries on and reports in its log what was left. }
+function InitializeUninstall(): Boolean;
+begin
+  Result := True;
+  if CloseAllAndWait then
+    exit;
+  Log('A running copy could not be closed; files it holds may remain in the install folder.');
+  if not UninstallSilent then
+  begin
+    MsgBox('{#ManagerName} or a Bridge MCP server is still running and could not be closed. ' +
+           'Close Claude Desktop, Codex and {#ManagerName}, then uninstall again.', mbError, MB_OK);
+    Result := False;
+  end;
 end;
 
 procedure ConnectClients;

@@ -64,6 +64,8 @@ function get(port, route, headers) {
   assert.match(String(lock.launchKey), /^[a-f0-9]{64}$/, 'the lock holds the launch key');
   const { launchUrl } = require('../src/launch-auth');
   const link = new URL(launchUrl(`http://127.0.0.1:${port}/`, lock.launchKey));
+  // Windows Explorer, which opens the default browser, silently drops an address with a query.
+  assert.equal(link.search, '', 'a launch link carries no query string');
   const launched = await get(port, link.pathname + link.search, local);
   assert.equal(launched.status, 303, 'a valid launch link redirects');
   assert.equal(launched.headers.location, '/', 'to the clean address');
