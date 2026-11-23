@@ -3,7 +3,7 @@
 # 10 and %TEMP%\sap-mcp-bridge-install-error.log for a silent install. When neither client
 # is found it says how to connect one later. /MERGETASKS=!clients installs without touching
 # the clients at all.
-param([Parameter(Mandatory=$true)][string]$SetupExe)
+param([Parameter(Mandatory=$true)][string]$SetupExe, [ValidateSet('desktop','web')][string]$Edition='desktop')
 . (Join-Path $PSScriptRoot 'installer-harness.ps1')
 $SetupExe=(Resolve-Path -LiteralPath $SetupExe).Path
 $box=New-Isolation 'clients'
@@ -20,7 +20,8 @@ try {
   # --- one client cannot be connected --------------------------------------------------
   $code=Invoke-Setup $SetupExe $box
   if($code -ne 10){ throw "Expected exit code 10 for a failed client setup, got $code" }
-  if(!(Test-Path -LiteralPath (Join-Path $box.Install 'desktop\SAP MCP Connection Manager.exe'))) { throw 'The app was not installed' }
+  $installed=if($Edition -eq 'web'){'src\web.js'}else{'desktop\SAP MCP Connection Manager.exe'}
+  if(!(Test-Path -LiteralPath (Join-Path $box.Install $installed))) { throw 'The app was not installed' }
   if((Get-FileHash -LiteralPath $claude).Hash -ne $claudeBefore) { throw 'Claude configuration was not restored' }
   if((Get-FileHash -LiteralPath $codex).Hash -ne $codexBefore) { throw 'The invalid Codex configuration was changed' }
   if(!(Test-Path -LiteralPath $errorLog) -or (Get-Item -LiteralPath $errorLog).LastWriteTime -lt $started) { throw 'No install error log was written' }

@@ -3,7 +3,7 @@
 # still decrypt in the new app, both clients connected with backups, the Start menu
 # shortcut, the Settings > Apps entry, no scripts left in the app, earlier copies removed,
 # the packaged MCP server starts, and uninstalling keeps the person's data.
-param([Parameter(Mandatory=$true)][string]$SetupExe, [switch]$LegacyRegistration)
+param([Parameter(Mandatory=$true)][string]$SetupExe, [switch]$LegacyRegistration, [ValidateSet('desktop','web')][string]$Edition='desktop')
 . (Join-Path $PSScriptRoot 'installer-harness.ps1')
 $SetupExe=(Resolve-Path -LiteralPath $SetupExe).Path
 $version=(Get-Content -Raw -LiteralPath (Join-Path $Source 'package.json') | ConvertFrom-Json).version
@@ -47,7 +47,13 @@ args = ['$install\src\host.js']
   $shortcutFile=Join-Path ([Environment]::GetFolderPath('Programs')) 'SAP MCP Connection Manager.lnk'
   if(!(Test-Path -LiteralPath $shortcutFile)) { throw 'Start menu shortcut missing' }
   $shortcut=(New-Object -ComObject WScript.Shell).CreateShortcut($shortcutFile)
-  if($shortcut.TargetPath -ne (Join-Path $install 'desktop\SAP MCP Connection Manager.exe')) { throw "Shortcut target incorrect: $($shortcut.TargetPath)" }
+  if($Edition -eq 'web') {
+    # node.exe runs the launcher in a console window that opens minimized (7) and stays visible.
+    if($shortcut.TargetPath -ne (Join-Path $install 'runtime\node.exe')) { throw "Shortcut target incorrect: $($shortcut.TargetPath)" }
+    if($shortcut.Arguments -notlike ('*'+(Join-Path $install 'src\web.js')+'*')) { throw "Shortcut does not start the web launcher: $($shortcut.Arguments)" }
+    if($shortcut.WindowStyle -ne 7) { throw "The web launcher should start minimized, got window style $($shortcut.WindowStyle)" }
+    if(Test-Path -LiteralPath (Join-Path $install 'desktop')) { throw 'The web edition installed Electron' }
+  } elseif($shortcut.TargetPath -ne (Join-Path $install 'desktop\SAP MCP Connection Manager.exe')) { throw "Shortcut target incorrect: $($shortcut.TargetPath)" }
   if($shortcut.IconLocation -notlike '*assets\bridge.ico,0') { throw 'Shortcut icon was not assigned' }
   if(Test-Path -LiteralPath (Join-Path $data 'manager.lock')) { throw 'A silent install launched the manager' }
   $report=Get-Content -Raw -LiteralPath (Join-Path $data 'client-setup.json') | ConvertFrom-Json
@@ -61,8 +67,10 @@ args = ['$install\src\host.js']
   if(Test-Path -LiteralPath $earlierCopy) { throw 'The earlier copy kept by 1.0.1 was not removed' }
   $entry=Get-ItemProperty -LiteralPath $UninstallKey
   if($entry.DisplayVersion -ne $version -or $entry.DisplayName -ne 'SAP MCP Desktop Bridge' -or $entry.Publisher -ne 'Muhammad Abdullah') { throw 'Settings > Apps entry is wrong' }
-  $exe=(Get-Item -LiteralPath (Join-Path $install 'desktop\SAP MCP Connection Manager.exe')).VersionInfo
-  if($exe.OriginalFilename -ne 'SAP MCP Connection Manager.exe' -or $exe.CompanyName -ne 'Muhammad Abdullah') { throw 'The app executable does not carry its own details' }
+  if($Edition -eq 'desktop') {
+    $exe=(Get-Item -LiteralPath (Join-Path $install 'desktop\SAP MCP Connection Manager.exe')).VersionInfo
+    if($exe.OriginalFilename -ne 'SAP MCP Connection Manager.exe' -or $exe.CompanyName -ne 'Muhammad Abdullah') { throw 'The app executable does not carry its own details' }
+  }
   $setupInfo=(Get-Item -LiteralPath $SetupExe).VersionInfo
   # Inno Setup pads its version strings; Windows shows them trimmed.
   if($setupInfo.CompanyName.TrimEnd([char]0,' ') -ne 'Muhammad Abdullah') { throw 'The installer does not name its publisher' }

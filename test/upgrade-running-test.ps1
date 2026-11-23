@@ -1,15 +1,23 @@
 # Updating while the manager is open, and while Claude Desktop or Codex has the Bridge's MCP
 # server running, must succeed: the installer closes those programs (they hold files it
 # replaces) and does not reopen anything. Versions before 1.0.2 failed in this situation.
-param([Parameter(Mandatory=$true)][string]$SetupExe)
+param([Parameter(Mandatory=$true)][string]$SetupExe, [ValidateSet('desktop','web')][string]$Edition='desktop')
 . (Join-Path $PSScriptRoot 'installer-harness.ps1')
 $SetupExe=(Resolve-Path -LiteralPath $SetupExe).Path
 $box=New-Isolation 'upgrade'
 try {
   $code=Invoke-Setup $SetupExe $box @('/MERGETASKS="!clients"')
   if($code -ne 0){ throw "First install returned $code" }
-  $app=Join-Path $box.Install 'desktop\SAP MCP Connection Manager.exe'
-  Start-Process -FilePath $app | Out-Null
+  if($Edition -eq 'web') {
+    # The web edition's manager: node.exe running the launcher, without opening a browser here.
+    $app=Join-Path $box.Install 'src\web.js'
+    $env:SAP_MCP_BRIDGE_NO_BROWSER='1'
+    Start-Process -FilePath (Join-Path $box.Install 'runtime\node.exe') -ArgumentList ('"'+$app+'"') -WindowStyle Minimized | Out-Null
+    Remove-Item Env:SAP_MCP_BRIDGE_NO_BROWSER
+  } else {
+    $app=Join-Path $box.Install 'desktop\SAP MCP Connection Manager.exe'
+    Start-Process -FilePath $app | Out-Null
+  }
   # What an MCP client keeps running: the bundled runtime, from the install folder.
   $host_=Start-Process -FilePath (Join-Path $box.Install 'runtime\node.exe') -ArgumentList '-e','setInterval(()=>{},1000)' -WindowStyle Hidden -PassThru
   $lock=Join-Path $box.Data 'manager.lock'

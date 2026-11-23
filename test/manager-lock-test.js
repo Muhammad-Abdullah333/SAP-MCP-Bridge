@@ -83,7 +83,10 @@ const deadPid = spawnSync(process.execPath, ['-e', '']).pid;
 async function assertTakesOver() {
   const child = startManager();
   const url = await waitForUrl(child);
-  assert.deepEqual(JSON.parse(fs.readFileSync(lock, 'utf8')), { pid: child.pid, url });
+  const record = JSON.parse(fs.readFileSync(lock, 'utf8'));
+  // The lock also holds the launch key that opens this manager (src/launch-auth.js).
+  assert.match(String(record.launchKey), /^[a-f0-9]{64}$/);
+  assert.deepEqual({ pid: record.pid, url: record.url }, { pid: child.pid, url });
   const alive = await get(new URL(ALIVE_ROUTE, url));
   assert.equal(alive.status, 200);
   assert.deepEqual(JSON.parse(alive.body), { app: MANAGER_APP, pid: child.pid });
@@ -144,7 +147,9 @@ async function assertTakesOver() {
   fs.rmSync(lock, { force: true });
   const first = startManager();
   const url = await waitForUrl(first);
-  assert.deepEqual(await inspectLock(lock), { state: 'running', url });
+  const found = await inspectLock(lock);
+  assert.deepEqual({ state: found.state, url: found.url }, { state: 'running', url });
+  assert.match(String(found.launchKey), /^[a-f0-9]{64}$/, 'a running manager hands over its launch key');
   const before = fs.readFileSync(lock, 'utf8');
   const second = startManager();
   assert.equal(await second.exited, 0);

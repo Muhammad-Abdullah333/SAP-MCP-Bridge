@@ -7,11 +7,14 @@ parser=argparse.ArgumentParser()
 parser.add_argument('--platform',choices=['win32-x64','darwin-arm64','darwin-x64'],required=True)
 parser.add_argument('--output',required=True)
 parser.add_argument('--base',required=True,help='build/base-payload as filled by packaging/fetch-base.py, or a pinned base package ZIP')
+# desktop: the Electron window. web: no Electron; the manager opens in the default browser (src/web.js).
+parser.add_argument('--edition',choices=['desktop','web'],default='desktop')
 args=parser.parse_args();version=json.loads((root/'package.json').read_text())['version'];out=Path(args.output).resolve();out.mkdir(parents=True,exist_ok=True)
 platform=args.platform;electron=root/'build/downloads'/f'electron-v44.4.2-{platform}.zip'
 checks=(root/'build/downloads/electron-SHASUMS256.txt').read_text();digest=hashlib.sha256(electron.read_bytes()).hexdigest()
 assert any(line.split()[0]==digest and line.split()[-1].lstrip('*')==electron.name for line in checks.splitlines()),'Electron checksum mismatch'
-work=root/'build'/f'desktop-{platform}-{version}';work.mkdir(parents=True,exist_ok=True)
+edition=args.edition
+work=root/'build'/f'{edition}-{platform}-{version}';work.mkdir(parents=True,exist_ok=True)
 # Bridge patches a small number of vendored abap-adt-mcp files (the policy engine).
 # Each patch records the digest of the upstream file it was written against; if the base
 # package ever ships a different one the build stops rather than patching blindly.
@@ -68,12 +71,17 @@ if platform=='win32-x64':
     for info in old.infolist():
      if info.filename.startswith(('app/vendor/','app/runtime/')) and '/node_modules/.bin/' not in info.filename: z.writestr(info,vendor_bytes(info.filename,'app/vendor/',old.read(info.filename)),compress_type=zipfile.ZIP_DEFLATED,compresslevel=6)
   source(z,'app/')
-  for info in desktop.infolist():
-   if info.is_dir() or info.filename=='resources/default_app.asar':continue
-   if info.filename=='electron.exe':put(z,'app/desktop/SAP MCP Connection Manager.exe',branded_exe(desktop.read(info.filename)),0o755)
-   else:put(z,'app/desktop/'+info.filename,desktop.read(info.filename))
-  put(z,'app/desktop/resources/app/package.json',json.dumps({'name':'sap-mcp-connection-manager','version':version,'main':'index.js'}).encode())
-  put(z,'app/desktop/resources/app/index.js',b"require('../../../src/desktop.js');\n")
+  if edition=='desktop':
+   for info in desktop.infolist():
+    if info.is_dir() or info.filename=='resources/default_app.asar':continue
+    # Not shipped: Chromium's 54 other interface languages (it falls back to en-US, and the
+    # app's own text is English) and the WebGPU shader compiler, which the app never uses.
+    if info.filename.startswith('locales/') and info.filename!='locales/en-US.pak':continue
+    if info.filename in ('dxcompiler.dll','dxil.dll'):continue
+    if info.filename=='electron.exe':put(z,'app/desktop/SAP MCP Connection Manager.exe',branded_exe(desktop.read(info.filename)),0o755)
+    else:put(z,'app/desktop/'+info.filename,desktop.read(info.filename))
+   put(z,'app/desktop/resources/app/package.json',json.dumps({'name':'sap-mcp-connection-manager','version':version,'main':'index.js'}).encode())
+   put(z,'app/desktop/resources/app/index.js',b"require('../../../src/desktop.js');\n")
   # Nothing else: the installer (packaging/windows/installer.iss) adds the Start menu
   # shortcut and a standard uninstaller, so the app carries no launcher scripts.
   names=set(z.namelist())

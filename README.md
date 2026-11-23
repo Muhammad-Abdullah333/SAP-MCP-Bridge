@@ -8,11 +8,26 @@ Windows 10 and 11.
 
 ## Install
 
-1. Download `SAP-MCP-Desktop-Bridge-<version>-Windows-Setup.exe` from [Releases](../../releases).
+1. Download one of the two installers from [Releases](../../releases) (see *Which download?* below).
 2. Run it. It installs for your Windows user only and needs no administrator rights. It offers to connect Claude Desktop and Codex (their settings are backed up first) and to open the manager when it finishes.
 3. Windows may show a SmartScreen notice the first time. Choose **More info → Run anyway**.
 
-**You don't need to install Node.js or anything else.** The installer includes its own Node.js runtime, the desktop shell and the MCP server. The only other things you need are:
+### Which download?
+
+Both do exactly the same work and connect Claude Desktop and Codex the same way. They differ only in how the manager window opens.
+
+| | Desktop edition | Web edition |
+| --- | --- | --- |
+| File | `SAP-MCP-Desktop-Bridge-<version>-Windows-Setup.exe` | `SAP-MCP-Desktop-Bridge-<version>-Windows-Web-Setup.exe` |
+| The manager opens | in its own app window | as a tab in your default browser |
+| Download | larger: it carries its own browser engine | much smaller |
+| While it runs | the app window | a small console window, minimized, that says the manager is running. Close it to stop the manager; it also stops by itself 10 minutes after the last tab closes. |
+
+Choose the desktop edition if you prefer an app window or your browser is locked down. Choose the web edition for a small download. You can switch at any time by installing the other one over it: your connections, passwords, certificates and client setup are kept.
+
+Claude Desktop and Codex never need the manager to be open. They start their own connection to SAP.
+
+**You don't need to install Node.js or anything else.** The installer includes its own Node.js runtime and the MCP server (and, in the desktop edition, the app window). The only other things you need are:
 
 - **Claude Desktop** or **Codex**, installed. A ChatGPT browser session alone can't use a local connector.
 - **An SAP account with ADT access**, a reachable HTTPS address, and your company's CA certificate if its servers use a private one.

@@ -1,6 +1,5 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const token = document.querySelector('meta[name=bridge-token]').content;
 let state = { connections: [] },
   selected = '';
 const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
@@ -28,16 +27,35 @@ call('/api/preferences')
   })
   .catch(error => notify('Could not load theme preference: ' + error.message, true, false));
 
+// Access comes from the session cookie the launch link set (src/launch-auth.js). The
+// request header is what a page from another site cannot add without the manager's consent.
 async function call(route, method = 'GET', data) {
   const response = await fetch(route, {
     method,
-    headers: { 'Content-Type': 'application/json', 'X-Bridge-Token': token },
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', 'X-Bridge-Request': '1' },
     body: data ? JSON.stringify(data) : undefined,
   });
   const value = await response.json();
   if (!response.ok) throw new Error(value.error || 'Request failed');
   return value;
 }
+
+// Tells the manager a window is still open; the web edition stops 10 minutes after the
+// last one goes. If the manager has stopped (or the computer slept past that), say so
+// plainly instead of letting the next click fail.
+async function heartbeat() {
+  try {
+    await call('/api/heartbeat', 'POST');
+    $('stopped-banner').hidden = true;
+  } catch (_) {
+    $('stopped-banner').hidden = false;
+  }
+}
+setInterval(heartbeat, 30 * 1000);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') heartbeat();
+});
 // advice replaces the generic explanation when the caller already knows what to do.
 function notify(message, error = false, record = true, advice) {
   if (record) addLog(message, error);

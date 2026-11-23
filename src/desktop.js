@@ -4,7 +4,8 @@ const fs = require('fs'),
   path = require('path');
 const { spawn } = require('child_process');
 const paths = require('./paths');
-const { inspectLock } = require('./manager-lock');
+const { inspectLock, readLock } = require('./manager-lock');
+const { launchUrl } = require('./launch-auth');
 let window,
   manager,
   quitting = false;
@@ -83,8 +84,11 @@ app
         window.show();
       });
     };
-    const found = await inspectLock(path.join(paths.dataDir, 'manager.lock'));
-    if (found.state === 'running') open(found.url);
+    // The window opens through a one-time launch link signed with the key in manager.lock
+    // (src/launch-auth.js); the page itself carries no secret.
+    const lockFile = path.join(paths.dataDir, 'manager.lock');
+    const found = await inspectLock(lockFile);
+    if (found.state === 'running' && found.launchKey) open(launchUrl(found.url, found.launchKey));
     if (!managerOrigin) {
       manager = spawn(node, [path.join(__dirname, 'manager.js')], {
         env: { ...process.env, SAP_MCP_BRIDGE_NO_BROWSER: '1' },
@@ -96,7 +100,9 @@ app
       manager.stdout.on('data', chunk => {
         output += chunk;
         const match = output.match(/http:\/\/127\.0\.0\.1:\d+\//);
-        if (match) open(match[0]);
+        // The manager writes the lock, with its launch key, before it prints the address.
+        const record = match && readLock(lockFile);
+        if (match && record.launchKey) open(launchUrl(match[0], record.launchKey));
       });
       manager.stderr.on('data', chunk => {
         errorText = (errorText + chunk).slice(-2000);

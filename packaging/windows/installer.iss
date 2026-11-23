@@ -97,11 +97,24 @@ Type: files; Name: "{userprograms}\{#AppName}.lnk"
 [Files]
 Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+; Both editions install the same shortcut name into the same folder, so installing one over
+; the other switches editions; connections, passwords and client registrations stay.
+#ifdef WebEdition
+; Web edition: the manager opens in the default browser. node.exe runs the launcher in a
+; small console window, started minimized and left visible: closing it stops the manager.
+; No custom executable and nothing hidden (see src/web.js).
+[Icons]
+Name: "{userprograms}\{#ManagerName}"; Filename: "{app}\runtime\node.exe"; Parameters: """{app}\src\web.js"""; WorkingDir: "{app}"; IconFilename: "{app}\assets\bridge.ico"; Comment: "{#ManagerName} - opens in your browser to manage Bridge connections and certificates"; Flags: runminimized
+
+[Run]
+Filename: "{app}\runtime\node.exe"; Parameters: """{app}\src\web.js"""; WorkingDir: "{app}"; Description: "Open {#ManagerName} in your browser"; Flags: nowait postinstall skipifsilent runminimized
+#else
 [Icons]
 Name: "{userprograms}\{#ManagerName}"; Filename: "{app}\desktop\{#ManagerName}.exe"; WorkingDir: "{app}"; IconFilename: "{app}\assets\bridge.ico"; Comment: "{#ManagerName} - manage Bridge connections and certificates"; AppUserModelID: "com.sap-mcp.desktop-bridge"
 
 [Run]
 Filename: "{app}\desktop\{#ManagerName}.exe"; Description: "Open {#ManagerName}"; Flags: nowait postinstall skipifsilent
+#endif
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"

@@ -20,34 +20,48 @@ const transfer = require('./transfer').createTransfer();
 const { ensureDir } = require('./storage');
 const { buildDiscoveryUrl } = require('./system-config');
 const { ALIVE_ROUTE, MANAGER_APP, inspectLock } = require('./manager-lock');
+const { LAUNCH_ROUTE, createLaunchAuth, launchUrl } = require('./launch-auth');
 
 ensureDir(paths.dataDir);
 const managerLock = path.join(paths.dataDir, 'manager.lock');
+const auth = createLaunchAuth();
+// Web edition: the browser tab is the only window, so the manager stops by itself once no
+// tab has checked in for a while (src/web.js sets this). The desktop window stops it on close.
+const webEdition = process.env.SAP_MCP_BRIDGE_WEB === '1';
+// SAP_MCP_BRIDGE_IDLE_STOP_MS exists for the tests only (test/web-edition-test.js).
+const IDLE_STOP_MS = Number(process.env.SAP_MCP_BRIDGE_IDLE_STOP_MS) > 0 ? Number(process.env.SAP_MCP_BRIDGE_IDLE_STOP_MS) : 10 * 60 * 1000;
+let lastSeen = Date.now();
 function openBrowser(url) {
   if (process.env.SAP_MCP_BRIDGE_NO_BROWSER === '1') return;
   const command = paths.isWindows ? 'explorer.exe' : '/usr/bin/open';
   spawn(command, [url], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
 }
+// The lock names the running manager and holds the launch key that opens it, so it is
+// written for the user only (the data folder already is on Windows).
+function writeLock(fd, url) {
+  fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, url, launchKey: auth.launchKey }));
+}
+function takeLock() {
+  const fd = fs.openSync(managerLock, 'wx', 0o600);
+  writeLock(fd, null);
+  fs.closeSync(fd);
+  return true;
+}
 async function acquireManagerLock() {
   try {
-    const fd = fs.openSync(managerLock, 'wx');
-    fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, url: null }));
-    fs.closeSync(fd);
-    return true;
+    return takeLock();
   } catch (error) {
     if (error.code !== 'EEXIST') throw error;
     const found = await inspectLock(managerLock);
     if (found.state !== 'stale') {
-      if (found.url) openBrowser(found.url);
+      // Already running: open it again rather than starting a second one.
+      if (found.url && found.launchKey) openBrowser(launchUrl(found.url, found.launchKey));
       return false;
     }
     try {
       fs.unlinkSync(managerLock);
     } catch (_) {}
-    const fd = fs.openSync(managerLock, 'wx');
-    fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, url: null }));
-    fs.closeSync(fd);
-    return true;
+    return takeLock();
   }
 }
 function releaseManagerLock() {
@@ -66,7 +80,6 @@ process.on('SIGTERM', () => process.exit(0));
 // it finds on every start is what antivirus behaviour monitoring calls credential theft.
 let migrationSummary;
 
-const token = crypto.randomBytes(24).toString('hex');
 const publicDir = path.join(__dirname, 'public');
 const types = {
   '.html': 'text/html; charset=utf-8',
@@ -75,9 +88,9 @@ const types = {
   '.svg': 'image/svg+xml',
 };
 
-// index.html carries the API token, so origin isolation is the only thing stopping a web
-// page from reading it. A DNS-rebound page reaches this port carrying its own Host header,
-// so refuse any authority that is not the loopback address we actually bound.
+// A DNS-rebound page reaches this port carrying its own Host header, so refuse any
+// authority that is not the loopback address we actually bound. Access itself comes from
+// the launch code and session cookie (src/launch-auth.js).
 let boundPort = 0;
 function loopbackHost(req) {
   const host = String(req.headers.host || '').toLowerCase();
@@ -125,8 +138,10 @@ function body(req) {
 }
 
 async function api(req, res, route) {
-  if (req.headers['x-bridge-token'] !== token) return json(res, 403, { error: 'Unauthorized request.' });
+  if (!auth.authorised(req)) return json(res, 403, { error: 'Unauthorized request.' });
+  lastSeen = Date.now();
   try {
+    if (route === '/api/heartbeat' && req.method === 'POST') return json(res, 200, { ok: true });
     if (route === '/api/preferences') {
       const preferences = require('./preferences');
       if (req.method === 'GET') return json(res, 200, preferences.read());
@@ -224,6 +239,14 @@ async function api(req, res, route) {
   }
 }
 
+// Shown for an expired or reused launch link, or the bare address typed by hand.
+function openFromIcon(res) {
+  const text = 'This SAP MCP Connection Manager link has expired or was already used. Open the manager from its Start menu icon.';
+  const page = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>SAP MCP Connection Manager</title></head><body><p>${text}</p></body></html>`;
+  res.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8', ...securityHeaders });
+  res.end(page);
+}
+
 const server = http.createServer((req, res) => {
   if (!loopbackHost(req)) {
     res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8', ...securityHeaders });
@@ -231,16 +254,25 @@ const server = http.createServer((req, res) => {
   }
   const url = new URL(req.url, 'http://127.0.0.1');
   if (url.pathname === ALIVE_ROUTE) return json(res, 200, { app: MANAGER_APP, pid: process.pid });
+  if (url.pathname === LAUNCH_ROUTE) {
+    const session = auth.redeem(url.searchParams.get('n'), url.searchParams.get('c'));
+    if (!session) return openFromIcon(res);
+    lastSeen = Date.now();
+    // Redirect to the clean address, so the one-time code stays out of the page.
+    res.writeHead(303, { Location: '/', 'Set-Cookie': auth.cookie(session), ...securityHeaders });
+    return res.end();
+  }
   if (url.pathname.startsWith('/api/')) return api(req, res, url.pathname);
   let relative = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
   if (!/^[a-zA-Z0-9._-]+$/.test(relative)) {
     res.writeHead(404);
     return res.end();
   }
+  // The page is only for a window or tab that was opened through a launch code.
+  if (relative === 'index.html' && !auth.hasSession(req)) return openFromIcon(res);
   const file = path.join(publicDir, relative);
   try {
-    let content = fs.readFileSync(file);
-    if (relative === 'index.html') content = Buffer.from(content.toString('utf8').replace('__BRIDGE_TOKEN__', token));
+    const content = fs.readFileSync(file);
     res.writeHead(200, { 'Content-Type': types[path.extname(file)] || 'application/octet-stream', ...securityHeaders });
     res.end(content);
   } catch (_) {
@@ -255,9 +287,21 @@ acquireManagerLock()
     server.listen(0, '127.0.0.1', () => {
       boundPort = server.address().port;
       const url = `http://127.0.0.1:${boundPort}/`;
-      fs.writeFileSync(managerLock, JSON.stringify({ pid: process.pid, url }));
-      openBrowser(url);
+      writeLock(managerLock, url);
+      openBrowser(launchUrl(url, auth.launchKey));
       process.stdout.write(`SAP MCP Desktop Bridge is running at ${url}\n`);
+      if (webEdition) {
+        lastSeen = Date.now();
+        setInterval(
+          () => {
+            if (Date.now() - lastSeen > IDLE_STOP_MS) {
+              process.stdout.write('No manager tab has been open for a while; stopping. Open it again from its icon.\n');
+              process.exit(0);
+            }
+          },
+          Math.min(30 * 1000, Math.max(250, IDLE_STOP_MS / 4)),
+        ).unref();
+      }
     });
   })
   .catch(error => {

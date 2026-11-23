@@ -36,23 +36,31 @@ jobs:
       - name: Tests
         run: npm test
 
-      - name: Build the installer
+      - name: Build the installers (desktop and web editions)
         shell: powershell
         run: packaging\windows\build.ps1 -Output dist
 
-      - name: Installer tests (upgrade, saved passwords, client setup, running programs, uninstall)
+      - name: Installer tests, both editions (upgrade, saved passwords, client setup, running programs, switching, uninstall)
         shell: powershell
-        timeout-minutes: 20
+        timeout-minutes: 40
         run: |
           $version = (Get-Content -Raw package.json | ConvertFrom-Json).version
-          $setup = (Resolve-Path "dist\SAP-MCP-Desktop-Bridge-$version-Windows-Setup.exe").Path
+          $setups = @{
+            desktop = (Resolve-Path "dist\SAP-MCP-Desktop-Bridge-$version-Windows-Setup.exe").Path
+            web = (Resolve-Path "dist\SAP-MCP-Desktop-Bridge-$version-Windows-Web-Setup.exe").Path
+          }
           powershell -NoProfile -ExecutionPolicy Bypass -File test\legacy-dpapi-test.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          powershell -NoProfile -ExecutionPolicy Bypass -File test\install-test.ps1 -SetupExe $setup -LegacyRegistration
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          powershell -NoProfile -ExecutionPolicy Bypass -File test\client-failure-test.ps1 -SetupExe $setup
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          powershell -NoProfile -ExecutionPolicy Bypass -File test\upgrade-running-test.ps1 -SetupExe $setup
+          foreach ($edition in 'desktop','web') {
+            $setup = $setups[$edition]
+            powershell -NoProfile -ExecutionPolicy Bypass -File test\install-test.ps1 -SetupExe $setup -Edition $edition -LegacyRegistration
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            powershell -NoProfile -ExecutionPolicy Bypass -File test\client-failure-test.ps1 -SetupExe $setup -Edition $edition
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            powershell -NoProfile -ExecutionPolicy Bypass -File test\upgrade-running-test.ps1 -SetupExe $setup -Edition $edition
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          powershell -NoProfile -ExecutionPolicy Bypass -File test\edition-switch-test.ps1 -DesktopSetup $setups.desktop -WebSetup $setups.web
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Keep the installer logs of a failed or cancelled test
@@ -73,15 +81,17 @@ jobs:
         shell: bash
         run: |
           version=$(node -p "require('./package.json').version")
-          echo "::notice title=App content fingerprint::$(python packaging/payload-digest.py build/desktop-win32-x64-$version/payload.zip)"
-          echo "::notice title=App payload SHA-256::$(sha256sum build/desktop-win32-x64-$version/payload.zip | cut -c1-64)"
-          echo "::notice title=Installer SHA-256::$(sha256sum dist/*-Windows-Setup.exe | cut -c1-64)"
+          for edition in desktop web; do
+            echo "::notice title=$edition content fingerprint::$(python packaging/payload-digest.py build/$edition-win32-x64-$version/payload.zip)"
+            echo "::notice title=$edition payload SHA-256::$(sha256sum build/$edition-win32-x64-$version/payload.zip | cut -c1-64)"
+          done
+          sha256sum dist/*-Setup.exe | while read hash file; do echo "::notice title=Installer SHA-256 $(basename "$file")::$hash"; done
 
       - uses: actions/upload-artifact@v7
         with:
           name: SAP-MCP-Desktop-Bridge-Windows
           path: |
-            dist/*-Windows-Setup.exe
+            dist/*-Setup.exe
             dist/SHA256SUMS-*.txt
           if-no-files-found: error
 
@@ -106,6 +116,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${GITHUB_REF_NAME#v}"
-          gh release create "$GITHUB_REF_NAME" dist/*-Windows-Setup.exe "dist/SHA256SUMS-$version.txt" \
+          gh release create "$GITHUB_REF_NAME" dist/*-Setup.exe "dist/SHA256SUMS-$version.txt" \
             --draft --title "SAP MCP Connection Manager $version" \
             --notes-file "packaging/release-notes/$version.md"

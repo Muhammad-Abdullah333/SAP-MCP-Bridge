@@ -70,7 +70,10 @@ async function inspectLock(file) {
   const record = readLock(file);
   if (!pidIsRunning(Number(record.pid))) return { state: 'stale' };
   if (!record.url) return { state: lockAge(file) < STARTING_MS ? 'starting' : 'stale' };
-  return (await answersAsManager(record)) ? { state: 'running', url: record.url } : { state: 'stale' };
+  // The launch key lets the caller open that manager (src/launch-auth.js).
+  return (await answersAsManager(record))
+    ? { state: 'running', url: record.url, launchKey: record.launchKey }
+    : { state: 'stale' };
 }
 
-module.exports = { ALIVE_ROUTE, MANAGER_APP, inspectLock };
+module.exports = { ALIVE_ROUTE, MANAGER_APP, inspectLock, readLock };
