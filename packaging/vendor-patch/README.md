@@ -33,6 +33,16 @@ One file from `abap-adt-api` is patched as well, `build/api/transports.js`:
 | --- | --- |
 | `transportRelease` sends a `tm:root` body | With `ignoreLocks` or `IgnoreATC` upstream POSTed `relwithignlock` / `relObjigchkatc` without a body, and SAP answered 400 "System expected the element '{http://www.sap.com/cts/adt/tm}root'". SAP reads those actions from a `tm:root` document (`ST_CTS_ADT_TM_MAIN`) and takes the request number from it, so a Transport of Copies whose objects stay locked in their original request could not be released. |
 
+Further `abap-adt-mcp` files, patched through `patchFile` in `make-patch.js`:
+
+| File | Change | Why |
+| --- | --- | --- |
+| `dist/handlers/QueryHandlers.js` | `runQuery` and `tableContents` run on the stateless clone | Every data preview ran in the destination's stateful session, where SAP generates a subroutine pool per query; after about 36 the session dumped (`GENERATE_SUBPOOL_DIR_FULL`) and the destination kept failing. Queries hold no lock, so they now use the stateless clone the class runner already uses. SSO and RFC destinations, which cannot use it, keep the stateful session. |
+| `dist/lib/queryDecode.js` | The blank sign position is trimmed | SAP sends `100000.00 ` (a blank where a minus would go). With `decode=true` a negative amount became a number and a positive one stayed a string. |
+| `dist/handlers/SnippetHandlers.js` | A warning for `WRITE`; oversized output shortened inside the JSON | `WRITE` prints to a classic list the class runner never shows, so the output was empty with no explanation. An oversized output was cut mid-JSON; now the output string is shortened and the result says how much was left out. |
+| `dist/handlers/FeedHandlers.js` | `dumps` accepts `brief` | One short entry per dump, for scanning a list before `dumpDetails`. |
+| `dist/handlers/SearchHandlers.js` | Fallback with an exact `objectName` | Without a text search index the fallback to `grepPackage` needed `packages`. An exact object name now supplies its own package, and only matches in that object are kept. |
+
 ## How it is applied
 
 `packaging/build-desktop.py` overlays every file under `node_modules/` here onto the vendor

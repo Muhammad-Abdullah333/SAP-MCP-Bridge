@@ -13,6 +13,21 @@
     },
     "node_modules/abap-adt-mcp/dist/lib/adtErrorHints.js": {
       "upstreamSha256": "5dc61fec4086c07d27a1ed91474e5053553968e947206424eaaee3de00f80c62"
+    },
+    "node_modules/abap-adt-mcp/dist/lib/queryDecode.js": {
+      "upstreamSha256": "d2e11f835810081fcae108819cf214ffc37a4f850bd7a66822253fbf8150b2dc"
+    },
+    "node_modules/abap-adt-mcp/dist/handlers/QueryHandlers.js": {
+      "upstreamSha256": "39f662dfd769d3cf3c27c34c3bef77d3ee1649341cc4d6b28c8a591d92c10aaa"
+    },
+    "node_modules/abap-adt-mcp/dist/handlers/SnippetHandlers.js": {
+      "upstreamSha256": "2b8012e2c4d63ac781d3dc3d79044ff93f539ad0cda0f84dc8db4d3a653fa088"
+    },
+    "node_modules/abap-adt-mcp/dist/handlers/FeedHandlers.js": {
+      "upstreamSha256": "1dda32736dbae2b805990cba8e3b5b814d86f9a153c069acbbeeed7fc77b0b33"
+    },
+    "node_modules/abap-adt-mcp/dist/handlers/SearchHandlers.js": {
+      "upstreamSha256": "70691c0fb08e23d75ed9a58fed39c0c03de5ea729ea8c6a3ca273d676ef8a824"
     }
   }
 }

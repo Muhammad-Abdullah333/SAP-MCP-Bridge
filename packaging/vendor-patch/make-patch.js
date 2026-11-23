@@ -428,6 +428,160 @@ replace(
 );
 
 fs.writeFileSync(path.join(OUT_DIR, 'adtErrorHints.js'), Buffer.from(text, 'utf8'));
+
+// ------------------------------------------------------------ further files
+// Each one is patched the same way: exact anchors from the pinned upstream file, written
+// under the same relative path, its upstream digest recorded for the build to verify.
+const MORE = {};
+function patchFile(rel, edits) {
+  const upstream = path.join('build/base-payload/app/vendor', rel);
+  MORE[rel] = { upstreamSha256: crypto.createHash('sha256').update(fs.readFileSync(upstream)).digest('hex') };
+  text = fs.readFileSync(upstream, 'utf8');
+  for (const [from, to, label] of edits) replace(from, to, label);
+  const out = path.join('packaging/vendor-patch', rel);
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, Buffer.from(text, 'utf8'));
+}
+
+// queryDecode.js: SAP leaves a blank where a minus would go ("100000.00 "). Upstream
+// moved a trailing minus to the front but returned other values untrimmed, so with
+// decode=true a positive amount stayed a string while a negative one became a number.
+patchFile('node_modules/abap-adt-mcp/dist/lib/queryDecode.js', [
+  [
+    `        const signed = signToFront(raw);`,
+    `        // Bridge patch: the blank sign position of a positive number is trimmed too.
+        const signed = signToFront(raw.trim());`,
+    'queryDecode trims the blank sign position of positive numbers',
+  ],
+]);
+
+// QueryHandlers.js: every data preview ran in the destination's stateful session, and
+// SAP generates a subroutine pool per query in that session. After about 36 queries
+// the session dumps (GENERATE_SUBPOOL_DIR_FULL) and the destination keeps failing.
+// Queries need no lock, so they now run on the stateless clone the class runner already
+// uses, where each request ends with its own session. SSO and RFC destinations, which
+// cannot use the clone, keep the stateful session as before.
+patchFile('node_modules/abap-adt-mcp/dist/handlers/QueryHandlers.js', [
+  [
+    `    handleTableContents(args) {`,
+    `    /** Bridge patch: the client a data preview runs on (stateless clone where possible). */
+    previewClient() {
+        var _a, _b;
+        const client = this.adtclient;
+        const rfc = (_b = (_a = client === null || client === void 0 ? void 0 : client.httpClient) === null || _a === void 0 ? void 0 : _a.httpclient) === null || _b === void 0 ? void 0 : _b.endStatefulSession;
+        if (typeof rfc === 'function')
+            return client;
+        try {
+            const clone = client.statelessClone;
+            return clone && clone !== client ? clone : client;
+        }
+        catch (_c) {
+            return client;
+        }
+    }
+    handleTableContents(args) {`,
+    'QueryHandlers gains previewClient',
+  ],
+  [
+    `const raw = yield this.adtclient.tableContents(`,
+    `const raw = yield this.previewClient().tableContents(`,
+    'tableContents runs on the stateless clone',
+  ],
+  [
+    `const raw = yield this.adtclient.runQuery(`,
+    `const raw = yield this.previewClient().runQuery(`,
+    'runQuery runs on the stateless clone',
+  ],
+]);
+
+// SnippetHandlers.js: (1) WRITE output never reaches the class runner's console, so a
+// snippet using WRITE returned empty output with no explanation. (2) An oversized output
+// was cut mid-JSON. The output string itself is now shortened, so the result stays
+// valid JSON and says how much was left out.
+patchFile('node_modules/abap-adt-mcp/dist/handlers/SnippetHandlers.js', [
+  [
+    `                if (run.locksInvalidated.length)
+                    payload.locksInvalidated = run.locksInvalidated;
+                const text = JSON.stringify(payload);`,
+    `                if (run.locksInvalidated.length)
+                    payload.locksInvalidated = run.locksInvalidated;
+                // Bridge patch: WRITE statements print to a classic list the class runner never shows.
+                if (/(?:^|[.\\n])\\s*WRITE\\s*[:/'\`|a-z0-9_]/i.test(String(args.code)) && !/out\\s*->\\s*write/i.test(String(args.code)))
+                    payload.warning = 'The code uses WRITE, which prints to a classic list that the class runner does not show. Use out->write( ... ) instead.';
+                // Bridge patch: shorten the output itself, so the result stays valid JSON.
+                const budget = 36000;
+                if (typeof payload.output === 'string' && JSON.stringify(payload).length > budget) {
+                    const total = payload.output.length;
+                    payload.output = payload.output.slice(0, Math.max(1000, budget - (JSON.stringify(payload).length - total) - 400));
+                    payload.outputTruncated = true;
+                    payload.outputChars = total;
+                    payload.note = \`Output shortened to its first \${payload.output.length} of \${total} characters. Running the snippet again repeats its effects, so print less, or print a later part with an offset in the ABAP itself.\`;
+                }
+                const text = JSON.stringify(payload);`,
+    'runSnippet warns about WRITE and shortens oversized output',
+  ],
+]);
+
+// FeedHandlers.js: dumps returns a summary with the top of the call stack per dump, which
+// is large when many dumps are listed. brief=true gives one short line per dump.
+patchFile('node_modules/abap-adt-mcp/dist/handlers/FeedHandlers.js', [
+  [
+    `                        startIndex: {
+                            type: 'number',
+                            description: '0-based index of the dump to start from (default 0). Use with maxItems to page through a large dump list.',`,
+    `                        brief: {
+                            type: 'boolean',
+                            description: 'One short entry per dump (id, time, user, runtime error, program, short text) instead of the full summary. Use it to scan a list, then dumpDetails for one dump.',
+                            optional: true
+                        },
+                        startIndex: {
+                            type: 'number',
+                            description: '0-based index of the dump to start from (default 0). Use with maxItems to page through a large dump list.',`,
+    'dumps accepts brief',
+  ],
+  [
+    `                const items = filtered.map(({ summary, raw }) => args.includeHtml === true ? Object.assign(Object.assign({}, summary), { html: raw.text }) : summary);`,
+    `                const items = filtered.map(({ summary, raw }) => args.brief === true
+                    ? { dumpId: summary.dumpId, timestamp: summary.timestamp, user: summary.user, runtimeError: summary.runtimeError, program: summary.program, shortText: summary.shortText }
+                    : args.includeHtml === true ? Object.assign(Object.assign({}, summary), { html: raw.text }) : summary);`,
+    'dumps returns one short entry per dump when brief',
+  ],
+]);
+
+// SearchHandlers.js: without a text search index the tool fell back to grepPackage only
+// when packages were given. With an exact objectName it now finds that object's package
+// and greps there, keeping only matches in that object.
+patchFile('node_modules/abap-adt-mcp/dist/handlers/SearchHandlers.js', [
+  [
+    `                if (response.status === 404 || response.status === 405 || response.status === 501) {
+                    if (packages.length) {`,
+    `                if (response.status === 404 || response.status === 405 || response.status === 501) {
+                    // Bridge patch: an exact object name supplies its own package for the fallback.
+                    let onlyObject;
+                    if (!packages.length && args.objectName && !/[*?]/.test(String(args.objectName))) {
+                        try {
+                            const want = String(args.objectName).toUpperCase();
+                            const hits = yield this.adtclient.searchObject(want, undefined, 50);
+                            const hit = (hits || []).find((h) => String(h['adtcore:name'] || '').toUpperCase() === want && h['adtcore:packageName']);
+                            if (hit) {
+                                packages.push(String(hit['adtcore:packageName']));
+                                onlyObject = want;
+                            }
+                        }
+                        catch (_x) { /* no package found: the refusal below stands */ }
+                    }
+                    if (packages.length) {`,
+    'sourceTextSearch finds the package of an exact objectName for the fallback',
+  ],
+  [
+    `                        merged.returnedMatches = merged.matches.length;`,
+    `                        if (onlyObject)
+                            merged.matches = merged.matches.filter((m) => String(m.name || '').toUpperCase() === onlyObject);
+                        merged.returnedMatches = merged.matches.length;`,
+    'sourceTextSearch keeps only the named object in that fallback',
+  ],
+]);
+
 fs.writeFileSync(
   'packaging/vendor-patch/upstream.json',
   Buffer.from(JSON.stringify({
@@ -438,6 +592,7 @@ fs.writeFileSync(
       [TR_REL]: { upstreamSha256: trHash },
       [IDX_REL]: { upstreamSha256: idxHash },
       [HINT_REL]: { upstreamSha256: hintHash },
+      ...MORE,
     },
   }, null, 2) + '\n', 'utf8'),
 );
